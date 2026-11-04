@@ -47,4 +47,35 @@ public sealed class PlaybackShortcutsTests
             element.Attribute(XName.Get("Name", "http://schemas.microsoft.com/winfx/2006/xaml"))?.Value == "PageScroll");
         Assert.DoesNotContain(waitingPage.Descendants(), element => element.Name.LocalName == "SwapChainPanel");
     }
+
+    [Fact]
+    public void LandingPageOmitsTechnicalPanelsAndShowsFooterVersion()
+    {
+        var document = XDocument.Load(Path.Combine(AppContext.BaseDirectory, "fixtures", "MainWindow.xaml"));
+        var name = XName.Get("Name", "http://schemas.microsoft.com/winfx/2006/xaml");
+        Assert.DoesNotContain(document.Descendants(), element => element.Name.LocalName is "Expander" or "ListView");
+        var version = Assert.Single(document.Descendants(), element => element.Attribute(name)?.Value == "VersionText");
+        Assert.Equal("2", version.Parent?.Attribute("Grid.Row")?.Value);
+        Assert.Null(version.Attribute("Text"));
+        Assert.Equal("True", document.Descendants().Single(element => element.Attribute(name)?.Value == "AddressesText")
+            .Attribute("IsTextSelectionEnabled")?.Value);
+        Assert.DoesNotContain(document.Descendants(), element => element.Name.LocalName == "Viewbox");
+        Assert.Contains(document.Descendants(), element => element.Attribute(name)?.Value == "AddressRows");
+        Assert.Equal("Wrap", document.Descendants().Single(element => element.Attribute(name)?.Value == "AddressesText")
+            .Attribute("TextWrapping")?.Value);
+        var layout = document.Descendants().Single(element => element.Attribute(name)?.Value == "LayoutRoot");
+        Assert.Equal("Stretch", layout.Attribute("HorizontalAlignment")?.Value);
+        Assert.Equal("Stretch", layout.Attribute("VerticalAlignment")?.Value);
+        Assert.Null(layout.Attribute("MinHeight"));
+        var scroll = document.Descendants().Single(element => element.Attribute(name)?.Value == "PageScroll");
+        Assert.Equal("Stretch", scroll.Attribute("VerticalContentAlignment")?.Value);
+        Assert.DoesNotContain(document.Descendants(), element => element.Attribute(name)?.Value == "HomeCard");
+        Assert.Equal("1", document.Descendants().Single(element => element.Attribute(name)?.Value == "HomeContent")
+            .Attribute("Grid.Row")?.Value);
+        Assert.Single(document.Descendants(), element => element.Name.LocalName == "InfoBar");
+        var key = XName.Get("Key", "http://schemas.microsoft.com/winfx/2006/xaml");
+        Assert.Contains(document.Descendants(), element => element.Attribute(key)?.Value == "Light");
+        Assert.Contains(document.Descendants(), element => element.Attribute(key)?.Value == "Default");
+        Assert.Contains(document.Descendants(), element => element.Attribute(key)?.Value == "HighContrast");
+    }
 }

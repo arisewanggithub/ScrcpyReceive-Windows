@@ -56,7 +56,7 @@ public sealed class ListenerTests
     }
 
     [Fact]
-    public async Task SrtNeverFallsBackToCustomTcp()
+    public async Task TransportOverrideRejectsBeforeOpeningPlayback()
     {
         var factory = new TestFactory();
         await using var server = Server(factory);
@@ -65,11 +65,7 @@ public sealed class ListenerTests
         await HelloAsync(client);
         await SendAsync(client, Packet.Control(PacketType.SessionRequest, 1, RequestTests.Settings(false, "aac", new
         {
-            kind = "srt",
-            container = "fmp4",
-            url = "srt://127.0.0.1:1234",
-            latencyMs = 100,
-            streamId = "sc-0000000000000001"
+            kind = "external", url = "udp://127.0.0.1:1234"
         })));
         var rejected = await ReadAsync(client);
         Assert.Equal("UNSUPPORTED_CONFIG", JsonObject.Text(rejected.Object(), "code"));
@@ -405,6 +401,52 @@ public sealed class ListenerTests
     }
 
     [Fact]
+    public async Task SenderFatalErrorIncludesReceiverWorkerAndQueueEvidence()
+    {
+        var factory = new TestFactory();
+        var presenting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var failure = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        factory.Playback.OnPresent = async (_, token) =>
+        {
+            presenting.TrySetResult();
+            await release.Task.WaitAsync(token);
+        };
+        await using var server = new ReceiverServer("Test", factory, notice =>
+        {
+            if (notice.State == "Sender error") failure.TrySetResult(notice.Detail);
+        }, 0, IPAddress.Loopback);
+        server.Start(false);
+        using var client = await ConnectAsync(server);
+        await HelloAsync(client);
+        await RequestAsync(client);
+        Assert.Equal(PacketType.SessionAccept, (await ReadAsync(client)).Type);
+        await SendAsync(client, QueueAndTrackTests.Configuration());
+        Assert.Equal(PacketType.StreamReady, (await ReadAsync(client)).Type);
+        await SendAsync(client, QueueAndTrackTests.Media(0));
+        await presenting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        try
+        {
+            await Task.Delay(450);
+            await SendAsync(client, Packet.Control(PacketType.Error, 1,
+                new { code = "CONGESTION", message = "Synthetic sender admission timeout", fatal = true }));
+            var detail = await failure.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Contains("Synthetic sender admission timeout", detail);
+            Assert.Contains("Video=VideoFrame generation=1", detail);
+            Assert.Contains("videoInFlight=VideoFrame", detail);
+            Assert.Contains("socketAvailableBytes=", detail);
+            Assert.Contains("receive handlingMaxMs=", detail);
+            Assert.Contains("transportStalls=[atMs=", detail);
+            if (OperatingSystem.IsWindows())
+            {
+                Assert.Contains("kernelBytesIn=", detail);
+                Assert.Contains("receiveWindow=", detail);
+            }
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Fact]
     public void DiscoveryMatchesPairedContractWithoutHostOrCodes()
     {
         var json = JsonObject.Parse(Discovery.Advertisement("Test", 27184, true));
@@ -473,6 +515,7 @@ public sealed class ListenerTests
         public bool HasEverPresentedVideo => !Presented.IsEmpty;
         public Exception? HealthFailure { get; set; }
         public Func<ValueTask>? OnDispose { get; set; }
+        public Func<Packet, CancellationToken, ValueTask>? OnPresent { get; set; }
         public void CheckHealth()
         {
             if (HealthFailure is { } failure) throw failure;
@@ -485,11 +528,11 @@ public sealed class ListenerTests
             Configured.Add(configuration.Track);
             return ValueTask.CompletedTask;
         }
-        public ValueTask PresentAsync(Packet media, CancellationToken cancellationToken)
+        public async ValueTask PresentAsync(Packet media, CancellationToken cancellationToken)
         {
+            if (OnPresent is not null) await OnPresent(media, cancellationToken);
             Presented.Enqueue(media.PtsUs);
             if (Presented.Count == 2) TwoPresented.TrySetResult();
-            return ValueTask.CompletedTask;
         }
         public ValueTask DisposeAsync()
         {

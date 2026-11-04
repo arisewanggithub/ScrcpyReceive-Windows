@@ -101,6 +101,35 @@ public sealed class ProtocolTests
     }
 
     [Fact]
+    public async Task PayloadProgressReportsPartialReadsWithoutChangingPacketBytes()
+    {
+        using var bytes = new MemoryStream();
+        await Wire.WriteAsync(bytes, new(PacketType.VideoFrame, 1, 1, 1, 0, 1, [1, 2, 3, 4]));
+        using var input = new FragmentedStream(bytes.ToArray());
+        var progress = new List<int>();
+        var packet = await Wire.ReadAsync(input, default, (incoming, received, total) =>
+        {
+            Assert.Equal(PacketType.VideoFrame, incoming.Type);
+            Assert.Equal(4, total);
+            progress.Add(received);
+        });
+        Assert.Equal(new[] { 0, 1, 2, 3, 4 }, progress);
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, packet.Payload);
+    }
+
+    [Fact]
+    public async Task PayloadProgressDoesNotMaskTruncatedInput()
+    {
+        using var bytes = new MemoryStream();
+        await Wire.WriteAsync(bytes, new(PacketType.VideoFrame, 1, 1, 1, 0, 1, [1, 2, 3, 4]));
+        using var input = new FragmentedStream(bytes.ToArray()[..^1]);
+        var receivedBytes = 0;
+        await Assert.ThrowsAsync<EndOfStreamException>(async () =>
+            await Wire.ReadAsync(input, default, (_, received, _) => receivedBytes = received));
+        Assert.Equal(3, receivedBytes);
+    }
+
+    [Fact]
     public async Task TruncatedPayloadIsAnError()
     {
         using var bytes = new MemoryStream();

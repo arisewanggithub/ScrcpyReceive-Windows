@@ -2,11 +2,11 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text.Json;
-using System.Collections.Concurrent;
 
 namespace ScrcpyReceive.Core;
 
-public sealed record ReceiverNotice(string State, string Detail, IReadOnlyList<string>? ListeningEndpoints = null);
+public sealed record ReceiverNotice(string State, string Detail, IReadOnlyList<string>? ListeningEndpoints = null,
+    IReadOnlyDictionary<string, string>? AdapterLabels = null);
 
 public sealed class ReceiverServer : IAsyncDisposable
 {
@@ -120,24 +120,27 @@ public sealed class ReceiverServer : IAsyncDisposable
         using var broadcaster = new DiscoveryBroadcaster(error =>
             notify(new("Discovery warning", $"UDP advertisement failed: {error.SocketErrorCode}. Manual TCP connection remains available.")));
         string? network = null;
+        string? addressDisplay = null;
         try
         {
             do
             {
                 var addresses = Discovery.Addresses();
                 var signature = string.Join(",", addresses.Select(item => item.Address));
-                var changed = network != signature;
+                var displaySignature = string.Join("\n", addresses.Select(item => $"{item.Address}\t{item.AdapterName}"));
+                var changed = addressDisplay != displaySignature;
                 if (network is not null && signature != network)
                 {
                     notify(new("Network changed", "Current addresses changed; disconnecting the active cast."));
                     await DisconnectAsync("Receiver network changed");
                 }
                 network = signature;
+                addressDisplay = displaySignature;
                 if (changed)
                 {
                     notify(new("Listening", "Current listener addresses refreshed.",
-                        addresses.Count == 0 ? [$"TCP {Port}; no active non-loopback IPv4 address."]
-                            : addresses.Select(item => Discovery.DisplayEndpoint(item.Address, Port)).ToArray()));
+                        addresses.Select(item => Discovery.DisplayEndpoint(item.Address, Port)).ToArray(),
+                        addresses.ToDictionary(item => Discovery.DisplayEndpoint(item.Address, Port), item => item.AdapterName)));
                     notify(new("Listening", "UDP discovery targets: " +
                         string.Join(", ", addresses.Select(item => $"{item.Address} -> {Discovery.DisplayEndpoint(item.Broadcast, Discovery.Port)}"))));
                 }
@@ -197,6 +200,7 @@ public sealed class ReceiverServer : IAsyncDisposable
         private readonly CancellationTokenSource playbackCancellation;
         private readonly SemaphoreSlim writer = new(1, 1);
         private readonly ReceiveDiagnostics receive = new();
+        private readonly ReceiverActivity activity = new();
         private readonly TaskCompletionSource ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
         // Reserve the remaining encoded budget for the managed/native in-progress packet.
         private ReceiveQueue queue = new(4 * 1024 * 1024);
@@ -205,12 +209,9 @@ public sealed class ReceiverServer : IAsyncDisposable
         private long startup = Environment.TickCount64;
         private int tracksReady;
         private int expectedTracks;
-        private uint readyAudioGeneration;
         private bool accepted;
         private bool disposed;
         private int stopping;
-        private bool srtMode, srtAudioExpected;
-        private readonly ConcurrentDictionary<(uint Track, uint Generation), TaskCompletionSource> srtConfigurations = new();
         public Task Completion { get; set; } = Task.CompletedTask;
 
         public Connection(ReceiverServer owner, TcpClient client)
@@ -227,17 +228,29 @@ public sealed class ReceiverServer : IAsyncDisposable
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token, extraCancellation);
             timeout.CancelAfter(TimeSpan.FromSeconds(10));
             await writer.WaitAsync(timeout.Token);
-            try { await Wire.WriteAsync(stream, packet, timeout.Token); }
+            try
+            {
+                activity.Begin(ReceiverOperation.Write, packet.Type.ToString());
+                try { await Wire.WriteAsync(stream, packet, timeout.Token); }
+                finally { activity.Complete(ReceiverOperation.Write); }
+            }
             finally { writer.Release(); }
         }
 
         private async Task<Packet> ReadAsync(CancellationToken token)
         {
             var begin = Environment.TickCount64;
-            var packet = await Wire.ReadAsync(stream, token);
-            receive.Received(packet, Environment.TickCount64 - begin);
-            Interlocked.Exchange(ref lastInput, Environment.TickCount64);
-            return packet;
+            activity.Begin(ReceiverOperation.Read, "header");
+            try
+            {
+                var packet = await Wire.ReadAsync(stream, token, (incoming, received, total) =>
+                    activity.Progress(ReceiverOperation.Read,
+                        $"{incoming.Type} track={incoming.Track} generation={incoming.Generation} payload={received}/{total}"));
+                receive.Received(packet, Environment.TickCount64 - begin);
+                Interlocked.Exchange(ref lastInput, Environment.TickCount64);
+                return packet;
+            }
+            finally { activity.Complete(ReceiverOperation.Read); }
         }
 
         public async Task RunAsync()
@@ -245,7 +258,6 @@ public sealed class ReceiverServer : IAsyncDisposable
             IPlayback? playback = null;
             Task? pump = null;
             Task? watchdog = null;
-            Task? mediaInput = null;
             try
             {
                 using var setup = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
@@ -297,29 +309,20 @@ public sealed class ReceiverServer : IAsyncDisposable
                 CastRequest request;
                 try
                 {
-                    request = CastRequest.Parse(requestPacket.Object(), session,
-                        ((IPEndPoint)client.Client.RemoteEndPoint!).Address);
+                    request = CastRequest.Parse(requestPacket.Object());
                 }
                 catch (ProtocolException error)
                 {
                     throw new ProtocolException(error.Message, "UNSUPPORTED_CONFIG");
                 }
-                srtMode = request.Srt is not null;
-                srtAudioExpected = request.AudioCodec is not null;
-                if (srtMode && !owner.factory.SupportsSrt)
-                    throw new ProtocolException("This playback backend does not support SRT/fMP4. No fallback.", "UNSUPPORTED_CONFIG");
                 if (request.AudioCodec is not null)
                 {
                     queue.Dispose();
                     queue = new ReceiveQueue(4 * 1024 * 1024 - 256 * 1024);
                 }
                 playback = await owner.factory.OpenAsync(request, setup.Token);
-                if (srtMode && playback is not ISrtPlayback)
-                    throw new ProtocolException("SRT playback input is unavailable.", "UNSUPPORTED_CONFIG");
                 expectedTracks = request.Tracks.Length;
-                await SendAsync(Packet.Control(PacketType.SessionAccept, session, srtMode
-                    ? (object)new { tracks = request.Tracks, mediaTransport = new { kind = "srt" } }
-                    : new { tracks = request.Tracks }), setup.Token);
+                await SendAsync(Packet.Control(PacketType.SessionAccept, session, new { tracks = request.Tracks }), setup.Token);
                 accepted = true;
                 Interlocked.Exchange(ref startup, Environment.TickCount64);
                 owner.notify(new("Initializing", $"{request.VideoCodec}, {request.AudioCodec ?? "audio off"}"));
@@ -327,7 +330,6 @@ public sealed class ReceiverServer : IAsyncDisposable
                 pump = Task.WhenAll(request.Tracks.Select(track =>
                     TrackThread.Run(() => PumpAsync(playback, trackState, track))));
                 watchdog = WatchdogAsync(playback);
-                if (playback is ISrtPlayback input && srtMode) mediaInput = ReceiveSrtAsync(input);
                 while (!cancellation.IsCancellationRequested)
                 {
                     var packet = await ReadAsync(cancellation.Token);
@@ -339,14 +341,19 @@ public sealed class ReceiverServer : IAsyncDisposable
                         case PacketType.StreamConfig:
                         case PacketType.VideoFrame:
                         case PacketType.AudioPacket:
-                            JsonObject.Require(!srtMode, "SRT sessions cannot substitute TCP media/configuration.");
                             var handlingAt = Environment.TickCount64;
+                            activity.Begin(ReceiverOperation.Admission,
+                                $"{packet.Type} track={packet.Track} generation={packet.Generation} bytes={packet.Payload.Length}");
                             try
                             {
                                 await queue.AddAsync(packet, cancellation.Token);
                                 if (Wire.IsMedia(packet.Type)) playback.Observe(packet);
                             }
-                            finally { receive.Handled(Environment.TickCount64 - handlingAt); }
+                            finally
+                            {
+                                activity.Complete(ReceiverOperation.Admission);
+                                receive.Handled(Environment.TickCount64 - handlingAt);
+                            }
                             break;
                         case PacketType.Ping:
                             await SendAsync(Packet.Control(PacketType.Pong, session, new { nonce = JsonObject.Number(packet.Object(), "nonce") }));
@@ -358,7 +365,6 @@ public sealed class ReceiverServer : IAsyncDisposable
                             var reason = JsonObject.Text(packet.Object(), "reason", 1024);
                             Interlocked.Exchange(ref stopping, 1);
                             playbackCancellation.Cancel();
-                            if (mediaInput is not null) await mediaInput;
                             if (pump is not null) await pump;
                             var retiring = playback;
                             playback = null;
@@ -379,7 +385,7 @@ public sealed class ReceiverServer : IAsyncDisposable
                                 "Unknown sender error code.");
                             var message = JsonObject.Text(body, "message", 2048);
                             var fatal = JsonObject.Boolean(body, "fatal");
-                            owner.notify(new("Sender error", $"{code}: {message}"));
+                            owner.notify(new("Sender error", $"{code}: {message}; {DiagnosticSnapshot(playback)}"));
                             if (fatal) return;
                             break;
                         case PacketType.Status:
@@ -405,7 +411,6 @@ public sealed class ReceiverServer : IAsyncDisposable
             {
                 cancellation.Cancel();
                 client.Dispose();
-                if (mediaInput is not null) await mediaInput;
                 if (pump is not null) await pump;
                 if (watchdog is not null) await watchdog;
                 try { if (playback is not null) await playback.DisposeAsync(); }
@@ -414,60 +419,24 @@ public sealed class ReceiverServer : IAsyncDisposable
             }
         }
 
-        private async Task ReceiveSrtAsync(ISrtPlayback playback)
+        private string DiagnosticSnapshot(IPlayback? playback)
         {
-            var token = playbackCancellation.Token;
-            try
+            string available;
+            try { available = client.Client is { } socket ? socket.Available.ToString() : "closed"; }
+            catch (Exception error) when (error is SocketException or ObjectDisposedException)
             {
-                await playback.ReceiveSrtAsync(async (incoming, cancellationToken) =>
-                {
-                    var packet = incoming with { Session = session };
-                    JsonObject.Require(packet.Type == PacketType.StreamConfig || Wire.IsMedia(packet.Type), "Unexpected SRT demux output.");
-                    if (packet.Type == PacketType.StreamConfig)
-                    {
-                        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                        var key = (packet.Track, packet.Generation);
-                        JsonObject.Require(srtConfigurations.TryAdd(key, ready), "Duplicate pending SRT configuration.");
-                        try
-                        {
-                            await queue.AddAsync(packet, cancellationToken);
-                            await ready.Task.WaitAsync(cancellationToken);
-                        }
-                        finally { srtConfigurations.TryRemove(key, out _); }
-                    }
-                    else
-                    {
-                        receive.Received(packet, 0);
-                        await queue.AddAsync(packet, cancellationToken);
-                        playback.Observe(packet);
-                    }
-                }, token);
-                token.ThrowIfCancellationRequested();
-                throw new EndOfStreamException("SRT live media ended without control STOP.");
+                available = $"unavailable({error.GetType().Name})";
             }
-            catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-            catch (Exception error)
-            {
-                if (token.IsCancellationRequested) return;
-                if (error is EndOfStreamException)
-                {
-                    try { await Task.Delay(150, token); }
-                    catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
-                }
-                if (Volatile.Read(ref stopping) != 0) return;
-                await FailAsync(error is ProtocolException ? error :
-                    new ProtocolException($"SRT input failed: {error.Message}", "DECODER_FAILED"), playback);
-                cancellation.Cancel();
-                client.Dispose();
-            }
+            return $"socketAvailableBytes={available}; {TcpSocketDiagnostics.Read(client.Client)}; " +
+                $"{activity.Diagnostics}; {receive.Diagnostics}; {queue.Diagnostics}" +
+                (playback is null ? "" : $" {playback.Diagnostics}");
         }
 
         private async Task FailAsync(Exception error, IPlayback? playback = null)
         {
             var code = error is ProtocolException protocol ? protocol.Code :
                 error is OperationCanceledException ? "TIMEOUT" : "PROTOCOL";
-            owner.notify(new(code, error.Message + $" {receive.Diagnostics}; {queue.Diagnostics}" +
-                (playback is null ? "" : $" {playback.Diagnostics}")));
+            owner.notify(new(code, error.Message + " " + DiagnosticSnapshot(playback)));
             try
             {
                 await SendAsync(accepted
@@ -489,6 +458,8 @@ public sealed class ReceiverServer : IAsyncDisposable
                 while (true)
                 {
                     var packet = await queue.TakeAsync(track, playbackCancellation.Token);
+                    var operation = track == 1 ? ReceiverOperation.Video : ReceiverOperation.Audio;
+                    activity.Begin(operation, $"{packet.Type} generation={packet.Generation} bytes={packet.Payload.Length}");
                     try
                     {
                     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(playbackCancellation.Token);
@@ -502,17 +473,9 @@ public sealed class ReceiverServer : IAsyncDisposable
                             ready = false;
                         }
                         state.Configure(packet);
-                        if (packet.Track == 2) Volatile.Write(ref readyAudioGeneration, 0);
                         await playback.ConfigureAsync(packet, timeout.Token);
                         state.MarkReady(packet.Track);
-                        if (packet.Track == 2) Volatile.Write(ref readyAudioGeneration, packet.Generation);
-                        if (srtMode)
-                        {
-                            if (!srtConfigurations.TryGetValue((packet.Track, packet.Generation), out var configured))
-                                throw new ProtocolException("SRT configuration acknowledgment is missing.", "INTERNAL");
-                            configured.TrySetResult();
-                        }
-                        else await SendAsync(new(PacketType.StreamReady, session, packet.Track, packet.Generation, -1, 0,
+                        await SendAsync(new(PacketType.StreamReady, session, packet.Track, packet.Generation, -1, 0,
                             JsonSerializer.SerializeToUtf8Bytes(new { ok = true })), playbackCancellation.Token);
                         ready = true;
                         Interlocked.Increment(ref tracksReady);
@@ -523,7 +486,11 @@ public sealed class ReceiverServer : IAsyncDisposable
                         await playback.PresentAsync(packet, timeout.Token);
                     }
                     }
-                    finally { queue.Complete(packet); }
+                    finally
+                    {
+                        activity.Complete(operation);
+                        queue.Complete(packet);
+                    }
                 }
             }
             catch (OperationCanceledException) when (playbackCancellation.IsCancellationRequested) { }
@@ -540,11 +507,9 @@ public sealed class ReceiverServer : IAsyncDisposable
         {
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(100));
             var nextPing = Environment.TickCount64 + 2000;
+            var nextTransportProbe = Environment.TickCount64;
             var initialStartup = Interlocked.Read(ref startup);
-            var srtPlaying = false;
             var videoStarted = false;
-            uint firstAudioGeneration = 0;
-            long firstAudioPosition = -1;
             try
             {
                 while (await timer.WaitForNextTickAsync(cancellation.Token))
@@ -554,29 +519,14 @@ public sealed class ReceiverServer : IAsyncDisposable
                     catch (ProtocolException) { throw; }
                     catch (Exception error) { throw new ProtocolException($"Playback health failed: {error.Message}", "DECODER_FAILED"); }
                     var now = Environment.TickCount64;
-                    videoStarted |= playback is IVideoPlaybackProgress { HasEverPresentedVideo: true };
-                    if (srtMode && !srtPlaying && playback is ISrtPlayback progress && progress.HasPresentedVideo)
+                    if (now >= nextTransportProbe && activity.ReadNoProgressMs >= 250)
                     {
-                        var generation = Volatile.Read(ref readyAudioGeneration);
-                        var audio = progress.PlayedAudioFrames;
-                        var stableAudio = generation != 0 && generation == Volatile.Read(ref readyAudioGeneration);
-                        if (stableAudio && generation != firstAudioGeneration)
-                        {
-                            firstAudioGeneration = generation;
-                            firstAudioPosition = audio;
-                        }
-                        if (!srtAudioExpected || stableAudio && audio > 0 && audio > firstAudioPosition)
-                        {
-                            await SendAsync(Packet.Control(PacketType.Status, session, new
-                            {
-                                state = "srt-playing", message = "Hardware video presented and enabled source audio is advancing."
-                            }));
-                            srtPlaying = true;
-                        }
+                        activity.RecordTransport(TcpSocketDiagnostics.Read(client.Client));
+                        nextTransportProbe = now + 250;
                     }
+                    videoStarted |= playback is IVideoPlaybackProgress { HasEverPresentedVideo: true };
                     if (now - Interlocked.Read(ref lastInput) >= 10_000 ||
-                        srtMode && !srtPlaying && now - initialStartup >= 10_000 ||
-                        !srtMode && playback is IVideoPlaybackProgress && !videoStarted && now - initialStartup >= 10_000 ||
+                        playback is IVideoPlaybackProgress && !videoStarted && now - initialStartup >= 10_000 ||
                         (Volatile.Read(ref tracksReady) < expectedTracks ||
                             playback is IVideoPlaybackProgress { HasPresentedVideo: false }) &&
                         now - Interlocked.Read(ref startup) >= 10_000)

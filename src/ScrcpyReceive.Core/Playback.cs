@@ -3,7 +3,6 @@ namespace ScrcpyReceive.Core;
 public interface IPlaybackFactory
 {
     string Description { get; }
-    bool SupportsSrt => false;
     ValueTask<IPlayback> OpenAsync(CastRequest request, CancellationToken cancellationToken);
 }
 
@@ -25,22 +24,12 @@ public interface IVideoPlaybackProgress
     bool HasEverPresentedVideo => HasPresentedVideo;
 }
 
-public interface IAudioPlaybackProgress
-{
-    long PlayedAudioFrames { get; }
-}
-
-public interface ISrtPlayback : IPlayback, IVideoPlaybackProgress, IAudioPlaybackProgress
-{
-    Task ReceiveSrtAsync(Func<Packet, CancellationToken, ValueTask> emit, CancellationToken cancellationToken);
-}
-
 public sealed class UnavailablePlaybackFactory : IPlaybackFactory
 {
-    public string Description => "Playback unavailable in this foundation build. Hardware-only decoding, GPU presentation, audio and SRT are not yet connected.";
+    public string Description => "Playback unavailable in this foundation build. Hardware-only decoding, GPU presentation and audio are not yet connected.";
 
     public ValueTask<IPlayback> OpenAsync(CastRequest request, CancellationToken cancellationToken) =>
         ValueTask.FromException<IPlayback>(new ProtocolException(
-            $"Requested {request.VideoCodec}/{request.AudioCodec ?? "audio off"} over {(request.Srt is null ? "TCP" : "SRT/fMP4")}. " +
+            $"Requested {request.VideoCodec}/{request.AudioCodec ?? "audio off"} over TCP. " +
             Description + " No capture was accepted.", "UNSUPPORTED_CONFIG"));
 }

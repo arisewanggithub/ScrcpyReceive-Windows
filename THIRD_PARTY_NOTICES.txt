@@ -39,24 +39,6 @@ Hardware video dependencies in this preview:
   included under licenses/FFmpeg.AutoGen-7.1.1 in published distributions.
   Corresponding source commit recorded by the exact NuGet package:
   https://github.com/Ruslan-B/FFmpeg.AutoGen/tree/d90d69ba6287e040ea09e68e0fc66c641ec77a34
-- SRT 1.5.7 (Mozilla Public License 2.0), dynamically linked caller transport.
-  Independently built from the checksum-pinned Haivision release, with a
-  ScrcpyReceive-Windows change in srtcore/core.cpp: overdue missing-packet
-  gaps wait for retransmission instead of spinning under the receive lock.
-  encryption, applications and logging are disabled. The exact upstream
-  SRT-LICENSE.txt and corresponding SRT-1.5.7-source.zip accompany srt.dll
-  in native/win-{architecture}. SRT-1.5.7-receiver-source.zip contains the
-  exact modified corresponding source under MPL 2.0; tools/PrepareSrt.ps1
-  applies the narrowly scoped change reproducibly and pins all build tools
-  and also prepares avformat-61.dll from the FFmpeg LGPL archive above,
-  checking its actual PE dependency closure without replacing existing files.
-  https://github.com/Haivision/srt/tree/v1.5.7
-  Build tools (not application redistributables): Zig 0.14.1 (MIT and
-  accompanying LLVM/runtime notices), CMake 3.31.6 (BSD-3-Clause and
-  accompanying notices), Ninja 1.13.1 (Apache-2.0).
-  Statically linked compiler/C++/MinGW runtime notices are also supplied
-  under native/win-{architecture}/SRT-runtime-notices (including
-  Apache-2.0 WITH LLVM-exception, MIT and MinGW component-specific terms).
 - Vortice.Direct3D11 / Vortice.DXGI / Vortice.Mathematics 3.8.3 and
   SharpGen.Runtime / SharpGen.Runtime.COM (MIT), with notices below.
   https://github.com/amerkoleci/Vortice.Windows

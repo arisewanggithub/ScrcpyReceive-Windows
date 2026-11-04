@@ -22,7 +22,9 @@ public sealed class ReceiveQueue : IDisposable
         {
             lock (gate)
                 return $"queue videoWaitAvgUs={waitTotalUs[0] / Math.Max(1, mediaTaken[0])}, videoWaitMaxUs={waitMaximumUs[0]}, " +
-                    $"audioWaitAvgUs={waitTotalUs[1] / Math.Max(1, mediaTaken[1])}, audioWaitMaxUs={waitMaximumUs[1]}";
+                    $"audioWaitAvgUs={waitTotalUs[1] / Math.Max(1, mediaTaken[1])}, audioWaitMaxUs={waitMaximumUs[1]}, " +
+                    $"mediaBytes={mediaBytes}/{maximumMediaBytes}, videoQueued={packets[0].Count}, audioQueued={packets[1].Count}, " +
+                    $"videoInFlight={inFlight[0]?.Type.ToString() ?? "none"}, audioInFlight={inFlight[1]?.Type.ToString() ?? "none"}";
         }
     }
 

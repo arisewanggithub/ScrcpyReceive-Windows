@@ -45,7 +45,9 @@ owner-managed signing. Successful schema validation is not Store certification.
    `RECEIVER_STORE_PACKAGE_NAME`, `RECEIVER_STORE_PUBLISHER`,
    `RECEIVER_STORE_PUBLISHER_DISPLAY_NAME`, `RECEIVER_STORE_APP_ID`.
    Feed the first three to `tools\Package.ps1` for each architecture; version
-   MAJOR.MINOR.PATCH.0, components <=65535. Then build/test a matching bundle.
+   MAJOR.MINOR.PATCH.0, components <=65535. Publish first with
+   `tools\Publish.ps1 -Version MAJOR.MINOR.PATCH`; the packager rejects a build
+   whose version differs from the requested package. Then build/test a matching bundle.
 6. Add a manual `main`-only Store workflow **after** identity is authorized.
    Default must be package-only, with an explicit publish choice. No automatic
    submission on pushes/tags/PRs. The current CI intentionally has no uploader.

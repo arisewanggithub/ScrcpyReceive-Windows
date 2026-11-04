@@ -2,57 +2,117 @@
     x:Class="ScrcpyReceive.App.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Grid x:Name="WindowRoot" PreviewKeyDown="Root_KeyDown">
-    <ContentControl x:Name="PlayerInput" IsTabStop="False"
-                    HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-        <Border x:Name="VideoContainer" Background="Black">
-            <SwapChainPanel x:Name="VideoSurface"/>
-        </Border>
-    </ContentControl>
-    <ScrollViewer x:Name="PageScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                  Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
-    <Grid x:Name="LayoutRoot" Padding="24" RowSpacing="16" MaxWidth="1280" HorizontalAlignment="Stretch">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-        <StackPanel Spacing="6">
-            <TextBlock Text="ScrcpyReceive-Windows" FontSize="28" FontWeight="SemiBold" TextWrapping="Wrap"/>
-            <TextBlock x:Name="MilestoneText" Text="Receiver foundation - not a playback release" FontSize="16" TextWrapping="Wrap"/>
-            <TextBlock Text="Waiting for a sender..." FontSize="20" TextWrapping="Wrap"/>
-        </StackPanel>
-        <InfoBar Grid.Row="1" IsOpen="True" IsClosable="False" Severity="Warning"
-                 Title="Trusted private LAN only"
-                 Message="Listening starts automatically. No encryption, authentication or pairing. Use only a trusted private network; close this app to stop listening."/>
-        <InfoBar x:Name="Problem" Grid.Row="2" IsOpen="False" IsClosable="False" Severity="Error"/>
-        <StackPanel Grid.Row="3" Spacing="8">
-            <TextBlock x:Name="AddressesText" Text="Starting receiver..." TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="18"/>
-            <TextBlock Text="During playback: Enter or F toggles fullscreen. Esc exits fullscreen." TextWrapping="Wrap"/>
-        </StackPanel>
-        <InfoBar x:Name="CapabilityInfo" Grid.Row="4" IsOpen="True" IsClosable="False" Severity="Informational"
-                 Title="Playback not connected"
-                 Message="This build validates protocol and lifecycle only. All cast requests receive UNSUPPORTED_CONFIG; no sender should capture or mute. Hardware decoding, GPU rendering, audio synchronization and SRT remain pending."/>
-        <Grid Grid.Row="5" RowSpacing="8">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
-            <TextBlock x:Name="StatusText" Text="Stopped" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap"/>
-            <Expander Grid.Row="1" Header="Connection details" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-            <ListView x:Name="Diagnostics" SelectionMode="None" Height="160">
-                <ListView.ItemTemplate>
-                    <DataTemplate>
-                        <TextBlock Text="{Binding}" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"/>
-                    </DataTemplate>
-                </ListView.ItemTemplate>
-            </ListView>
-            </Expander>
-        </Grid>
-    </Grid>
-    </ScrollViewer>
+    <Grid x:Name="WindowRoot" PreviewKeyDown="Root_KeyDown" SizeChanged="WindowRoot_SizeChanged">
+        <Grid.Resources>
+            <ResourceDictionary>
+                <ResourceDictionary.ThemeDictionaries>
+                    <ResourceDictionary x:Key="Default">
+                        <LinearGradientBrush x:Key="ReceiverBackgroundBrush" StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#172B39" Offset="0"/>
+                            <GradientStop Color="#0E1521" Offset="1"/>
+                        </LinearGradientBrush>
+                        <SolidColorBrush x:Key="ReceiverAccentBrush" Color="#A2E9D1"/>
+                        <SolidColorBrush x:Key="ReceiverAccentBackgroundBrush" Color="#203D3A"/>
+                    </ResourceDictionary>
+                    <ResourceDictionary x:Key="Light">
+                        <LinearGradientBrush x:Key="ReceiverBackgroundBrush" StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#F4FAF8" Offset="0"/>
+                            <GradientStop Color="#EDF2F7" Offset="1"/>
+                        </LinearGradientBrush>
+                        <SolidColorBrush x:Key="ReceiverAccentBrush" Color="#116B52"/>
+                        <SolidColorBrush x:Key="ReceiverAccentBackgroundBrush" Color="#DDF4EB"/>
+                    </ResourceDictionary>
+                    <ResourceDictionary x:Key="HighContrast">
+                        <SolidColorBrush x:Key="ReceiverBackgroundBrush" Color="{ThemeResource SystemColorWindowColor}"/>
+                        <SolidColorBrush x:Key="ReceiverAccentBrush" Color="{ThemeResource SystemColorWindowTextColor}"/>
+                        <SolidColorBrush x:Key="ReceiverAccentBackgroundBrush" Color="{ThemeResource SystemColorWindowColor}"/>
+                    </ResourceDictionary>
+                </ResourceDictionary.ThemeDictionaries>
+            </ResourceDictionary>
+        </Grid.Resources>
+        <ContentControl x:Name="PlayerInput" IsTabStop="False"
+                        HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+            <Border x:Name="VideoContainer" Background="Black">
+                <SwapChainPanel x:Name="VideoSurface"/>
+            </Border>
+        </ContentControl>
+        <ScrollViewer x:Name="PageScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                      HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"
+                      Background="{ThemeResource ReceiverBackgroundBrush}">
+            <Grid x:Name="LayoutRoot" Padding="28" RowSpacing="24"
+                  HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                        <StackPanel x:Name="BrandGroup" Spacing="12" MaxWidth="800" HorizontalAlignment="Center">
+                            <Border x:Name="ReceiverIconBox" Width="72" Height="72" HorizontalAlignment="Center"
+                                    CornerRadius="20" Background="{ThemeResource ReceiverAccentBackgroundBrush}">
+                                <FontIcon x:Name="ReceiverIcon" Glyph="&#xE7F4;" FontSize="34" Foreground="{ThemeResource ReceiverAccentBrush}"
+                                          AutomationProperties.AccessibilityView="Raw"/>
+                            </Border>
+                            <TextBlock x:Name="BrandText" Text="ScrcpyReceive-Windows" FontSize="26" FontWeight="SemiBold"
+                                       TextAlignment="Center" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
+                        </StackPanel>
+                    <StackPanel x:Name="HomeContent" Grid.Row="1" Spacing="18" MaxWidth="800"
+                                HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Border CornerRadius="20" Padding="16,9" HorizontalAlignment="Center"
+                                Background="{ThemeResource ControlFillColorSecondaryBrush}">
+                            <StackPanel Orientation="Horizontal" Spacing="9">
+                                <Ellipse x:Name="ReadyIndicator" Width="8" Height="8" VerticalAlignment="Center"
+                                         Fill="{ThemeResource ReceiverAccentBrush}" Visibility="Collapsed"/>
+                                <ProgressRing x:Name="ConnectionProgress" Width="18" Height="18" IsActive="True"
+                                              Foreground="{ThemeResource ReceiverAccentBrush}"/>
+                                <FontIcon x:Name="AttentionIndicator" Glyph="&#xE7BA;" FontSize="16"
+                                          Foreground="{ThemeResource TextFillColorSecondaryBrush}" Visibility="Collapsed"
+                                          AutomationProperties.AccessibilityView="Raw"/>
+                                <TextBlock x:Name="StatusText" Text="Starting receiver" FontSize="16" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite"
+                                           Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
+                            </StackPanel>
+                        </Border>
+                        <StackPanel Spacing="8" Margin="0,6,0,0">
+                            <TextBlock x:Name="AddressLabel" Text="THIS PC'S ADDRESS" FontSize="12"
+                                       TextAlignment="Center" CharacterSpacing="120"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <StackPanel x:Name="AddressDisplay" Visibility="Collapsed" Spacing="10">
+                                <TextBlock x:Name="AddressesText" FontSize="44" FontWeight="SemiBold"
+                                           FontFamily="Consolas" TextAlignment="Center" IsTextSelectionEnabled="True" TextWrapping="Wrap"
+                                           AutomationProperties.Name="Receiver addresses"
+                                           Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
+                                <ItemsControl x:Name="AddressRows" Visibility="Collapsed" HorizontalContentAlignment="Stretch">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                                <StackPanel Spacing="4" Margin="0,0,0,18">
+                                                    <TextBlock Text="{Binding Adapter}" FontSize="13" TextWrapping="Wrap"
+                                                               TextAlignment="Center"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                                    <TextBlock Text="{Binding Endpoint}" FontSize="{Binding FontSize}" FontFamily="Consolas"
+                                                               FontWeight="SemiBold" TextWrapping="Wrap" IsTextSelectionEnabled="True"
+                                                               TextAlignment="Center"
+                                                               Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
+                                                </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                            <TextBlock x:Name="AddressPlaceholder" Text="Checking network addresses..." FontSize="18"
+                                       TextWrapping="Wrap" TextAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <TextBlock x:Name="WaitingHint" Text="Opening this PC for your sender..." FontSize="16"
+                                   TextAlignment="Center" TextWrapping="Wrap" LineHeight="25"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <InfoBar x:Name="Problem" IsOpen="False" IsClosable="False" Severity="Error"/>
+                    </StackPanel>
+                <StackPanel x:Name="FooterGroup" Grid.Row="2" Spacing="6">
+                    <TextBlock Text="Trusted local networks only &#x00B7; No pairing or encryption"
+                               FontSize="12" TextAlignment="Center" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <TextBlock x:Name="VersionText" FontSize="12" TextAlignment="Center" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                </StackPanel>
+            </Grid>
+        </ScrollViewer>
     </Grid>
 </Window>

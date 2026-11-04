@@ -30,8 +30,6 @@ public sealed class VideoPlayback : IPlayback, IVideoPlaybackProgress
     private long? firstVideoPresentationPts;
     private long receivedVideoPackets, decodedVideoPackets, decodedFrames, skippedFrames;
     private long maximumDecodeUs, maximumGateWaitUs, totalDecodeUs;
-    private int configuredVideoGenerations;
-    public int ConfiguredVideoGenerations => Volatile.Read(ref configuredVideoGenerations);
     public long DecodedFrames => Interlocked.Read(ref decodedFrames);
     public long SkippedFrames => Interlocked.Read(ref skippedFrames);
     public long LastPresentedPtsUs => Interlocked.Read(ref lastVideoPts);
@@ -69,7 +67,7 @@ public sealed class VideoPlayback : IPlayback, IVideoPlaybackProgress
 
     public static void Validate(CastRequest request)
     {
-        if (request.VideoCodec is not ("h264" or "h265" or "av1") || request.Srt is not null && request.AudioCodec is not (null or "aac" or "opus") ||
+        if (request.VideoCodec is not ("h264" or "h265" or "av1") ||
             request.ReceiverOrientation != "auto" || request.FramesPerSecond > 60)
             throw new ProtocolException("Supports custom TCP 8-bit H.264, HEVC Main and AV1 Profile 0, PCM/AAC-LC/Opus audio, auto presentation, at most 60 FPS. No substitution.", "UNSUPPORTED_CONFIG");
     }
@@ -124,7 +122,6 @@ public sealed class VideoPlayback : IPlayback, IVideoPlaybackProgress
             decoder.Configure(CodecConfiguration.VideoData(codecName, buffers),
                 JsonObject.Number(json, "width"), JsonObject.Number(json, "height"));
             presenter.Prepare(JsonObject.Number(json, "width"), JsonObject.Number(json, "height"));
-            Interlocked.Increment(ref configuredVideoGenerations);
         }
         await status($"Hardware {codecName} decoder configured; waiting for a real random-access picture.");
     }

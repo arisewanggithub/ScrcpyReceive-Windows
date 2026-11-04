@@ -6,11 +6,11 @@
     <NativeRuntime>$(ReceiverRuntimeIdentifier)</NativeRuntime>
   </PropertyGroup>
   <ItemGroup>
-    <InternalsVisibleTo Include="ScrcpyReceive.SrtInterop" />
     <ProjectReference Include="..\ScrcpyReceive.Core\ScrcpyReceive.Core.csproj"/>
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3"/>
     <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1"/>
-    <Content Include="..\..\native\$(NativeRuntime)\**\*" Link="native\$(NativeRuntime)\%(RecursiveDir)%(Filename)%(Extension)"
+    <Content Include="..\..\native\$(NativeRuntime)\avcodec-61.dll;..\..\native\$(NativeRuntime)\avutil-59.dll;..\..\native\$(NativeRuntime)\swresample-5.dll;..\..\native\$(NativeRuntime)\FFmpeg-LICENSE.txt;..\..\native\$(NativeRuntime)\FFmpeg-copyright.txt;..\..\native\$(NativeRuntime)\FFmpeg-build-dependencies.txt;..\..\native\$(NativeRuntime)\FFmpeg-dependencies.spdx.json"
+             Link="native\$(NativeRuntime)\%(Filename)%(Extension)"
              CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"/>
   </ItemGroup>
   <Target Name="ValidateMediaArchitecture" BeforeTargets="PrepareForBuild">

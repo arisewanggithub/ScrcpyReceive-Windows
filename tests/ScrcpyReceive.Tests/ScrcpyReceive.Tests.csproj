@@ -11,7 +11,6 @@
     <ProjectReference Include="..\..\src\ScrcpyReceive.Core\ScrcpyReceive.Core.csproj"/>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="..\ScrcpyReceive.SrtInterop\PresentationProgress.cs" Link="PresentationProgress.cs"/>
     <None Include="fixtures\*.json" CopyToOutputDirectory="PreserveNewest"/>
     <None Include="..\..\src\ScrcpyReceive.App\MainWindow.xaml" Link="fixtures\MainWindow.xaml" CopyToOutputDirectory="PreserveNewest"/>
   </ItemGroup>

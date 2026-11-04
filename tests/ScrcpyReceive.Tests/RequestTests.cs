@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text;
 using System.Text.Json;
 using ScrcpyReceive.Core;
@@ -27,7 +26,7 @@ public sealed class RequestTests
     };
 
     internal static CastRequest Request(bool audio = true, string codec = "raw") =>
-        CastRequest.Parse(JsonObject.Parse(JsonSerializer.SerializeToUtf8Bytes(Settings(audio, codec))), 1, IPAddress.Loopback);
+        CastRequest.Parse(JsonObject.Parse(JsonSerializer.SerializeToUtf8Bytes(Settings(audio, codec))));
 
     [Theory]
     [InlineData("h264")]
@@ -36,7 +35,7 @@ public sealed class RequestTests
     public void RecognizesSenderVideoCodecs(string codec)
     {
         var bytes = JsonSerializer.Serialize(Settings()).Replace("\"h264\"", $"\"{codec}\"", StringComparison.Ordinal);
-        var request = CastRequest.Parse(JsonObject.Parse(Encoding.UTF8.GetBytes(bytes)), 1, IPAddress.Loopback);
+        var request = CastRequest.Parse(JsonObject.Parse(Encoding.UTF8.GetBytes(bytes)));
         Assert.Equal(codec, request.VideoCodec);
         Assert.Equal(new[] { 1u, 2u }, request.Tracks);
     }
@@ -56,68 +55,36 @@ public sealed class RequestTests
     {
         var text = JsonSerializer.Serialize(Settings()).Replace(oldText, newText, StringComparison.Ordinal);
         Assert.Throws<ProtocolException>(() =>
-            CastRequest.Parse(JsonObject.Parse(Encoding.UTF8.GetBytes(text)), 1, IPAddress.Loopback));
+            CastRequest.Parse(JsonObject.Parse(Encoding.UTF8.GetBytes(text))));
     }
 
     [Fact]
     public void OptionalOrientationAndUnknownIdentityFieldsRemainCompatible()
     {
         var text = JsonSerializer.Serialize(Settings(false)).Replace("\"receiverOrientation\":\"auto\",", "", StringComparison.Ordinal);
-        var request = CastRequest.Parse(JsonObject.Parse(Encoding.UTF8.GetBytes(text)), 1, IPAddress.Loopback);
+        var request = CastRequest.Parse(JsonObject.Parse(Encoding.UTF8.GetBytes(text)));
         Assert.Equal("auto", request.ReceiverOrientation);
         Assert.Null(request.AudioCodec);
         Assert.Single(request.Tracks);
     }
 
     [Theory]
-    [InlineData("srt://127.0.0.1:1234", true)]
-    [InlineData("srt://[::1]:1234", false)]
-    [InlineData("srt://127.0.0.2:1234", false)]
-    [InlineData("srt://localhost:1234", false)]
-    [InlineData("srt://127.0.0.1:1234/", false)]
-    [InlineData("srt://127.0.0.1:1234?x=1", false)]
-    [InlineData("srt://user@127.0.0.1:1234", false)]
-    [InlineData("srt://127.0.0.1:1234#fragment", false)]
-    [InlineData("srt://127.0.0.1:0", false)]
-    [InlineData("srt://127.0.0.1:65536", false)]
-    [InlineData("srt://127.0.0.1", false)]
-    [InlineData("srt://127.1:1234", false)]
-    [InlineData("SRT://127.0.0.1:1234", false)]
-    public void SrtPinsLiteralAuthorityToControlPeer(string url, bool valid)
+    [InlineData("null")]
+    [InlineData("{}")]
+    [InlineData("{\"kind\":\"external\",\"url\":\"udp://127.0.0.1:1234\"}")]
+    [InlineData("{\"kind\":\"tcp\"}")]
+    [InlineData("\"tcp\"")]
+    [InlineData("[]")]
+    [InlineData("false")]
+    [InlineData("1")]
+    public void TransportOverridesAreRejectedWithoutFallback(string value)
     {
-        var json = JsonObject.Parse(JsonSerializer.SerializeToUtf8Bytes(new
-        {
-            kind = "srt", container = "fmp4", url, latencyMs = 100, streamId = "sc-0000000000000001"
-        }));
-        if (valid) Assert.Equal(url, SrtDescriptor.Parse(json, 1, IPAddress.Loopback).Url);
-        else Assert.Throws<ProtocolException>(() => SrtDescriptor.Parse(json, 1, IPAddress.Loopback));
-    }
-
-    [Theory]
-    [InlineData("sc-0000000000000002", 100, "fmp4")]
-    [InlineData("sc-0000000000000001", 19, "fmp4")]
-    [InlineData("sc-0000000000000001", 2001, "fmp4")]
-    [InlineData("sc-0000000000000001", 100, "mpegts")]
-    public void SrtRequiresExactSessionAndLimits(string streamId, int latencyMs, string container)
-    {
-        var json = JsonObject.Parse(JsonSerializer.SerializeToUtf8Bytes(new
-        {
-            kind = "srt", container, url = "srt://127.0.0.1:1234", latencyMs, streamId
-        }));
-        Assert.Throws<ProtocolException>(() => SrtDescriptor.Parse(json, 1, IPAddress.Loopback));
-    }
-
-    [Fact]
-    public void SrtSupportsBracketedPinnedIpv6()
-    {
-        var json = JsonObject.Parse("""{"kind":"srt","container":"fmp4","url":"srt://[::1]:1234","latencyMs":100,"streamId":"sc-0000000000000001"}"""u8);
-        Assert.Equal("srt://[::1]:1234", SrtDescriptor.Parse(json, 1, IPAddress.IPv6Loopback).Url);
-    }
-
-    [Fact]
-    public void SrtRejectsExtraFields()
-    {
-        var json = JsonObject.Parse("""{"kind":"srt","container":"fmp4","url":"srt://127.0.0.1:1234","latencyMs":100,"streamId":"sc-0000000000000001","extra":0}"""u8);
-        Assert.Throws<ProtocolException>(() => SrtDescriptor.Parse(json, 1, IPAddress.Loopback));
+        var root = JsonSerializer.SerializeToElement(Settings()).EnumerateObject()
+            .ToDictionary(property => property.Name, property => property.Value);
+        using var transport = JsonDocument.Parse(value);
+        root["mediaTransport"] = transport.RootElement;
+        var error = Assert.Throws<ProtocolException>(() =>
+            CastRequest.Parse(JsonObject.Parse(JsonSerializer.SerializeToUtf8Bytes(root))));
+        Assert.Equal("UNSUPPORTED_CONFIG", error.Code);
     }
 }

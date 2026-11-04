@@ -22,7 +22,6 @@ internal sealed class VideoHost : IPlaybackFactory, IDisposable
     public int AvMeasurements => playback?.AvMeasurements ?? 0;
     public long MaximumSteadySkewUs => playback?.MaximumSteadySkewUs ?? 0;
     public long DecodedFrames => playback?.DecodedFrames ?? 0;
-    public int ConfiguredVideoGenerations => playback?.ConfiguredVideoGenerations ?? 0;
     public long SkippedFrames => playback?.SkippedFrames ?? 0;
     public long LastPresentedPtsUs => playback?.LastPresentedPtsUs ?? 0;
     public string DecoderDiagnostics => playback?.DecoderDiagnostics ?? "";
@@ -33,9 +32,7 @@ internal sealed class VideoHost : IPlaybackFactory, IDisposable
     public bool KeepsDisplayAwake => playback?.KeepsDisplayAwake ?? false;
     public bool IsAttached => active is not null;
     public bool IsPlaying => PresentedFrames > 0;
-    public bool SupportsSrt => true;
-
-    public string Description => "Hardware-only 8-bit H.264, HEVC Main and AV1 Profile 0. Custom TCP supports PCM/AAC-LC/Opus audio; explicit SRT/fMP4 supports AAC-LC/Opus. Immediate video and adaptive 50-150 ms audio buffering. Auto orientation, up to 60 FPS; brief audio gaps remain possible.";
+    public string Description => "Hardware-only 8-bit H.264, HEVC Main and AV1 Profile 0 over custom TCP with PCM/AAC-LC/Opus audio. Immediate video and adaptive 50-150 ms audio buffering. Auto orientation, up to 60 FPS; brief audio gaps remain possible.";
 
     public VideoHost(SwapChainPanel panel, Action<string> status)
     {
@@ -72,12 +69,10 @@ internal sealed class VideoHost : IPlaybackFactory, IDisposable
         GpuPresenter? presenter = null;
         HardwareDecoder? decoder = null;
         AudioPlayback? audio = null;
-        SrtInput? srtInput = null;
         VideoPlayback? preparedPlayback = null;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (request.Srt is not null) srtInput = new SrtInput(request);
             presenter = new GpuPresenter();
             decoder = new HardwareDecoder(presenter.Device, request.VideoCodec);
             if (request.AudioCodec is not null) audio = new AudioPlayback(request.AudioCodec);
@@ -112,31 +107,27 @@ internal sealed class VideoHost : IPlaybackFactory, IDisposable
                 Resize();
             });
             ownedPlayback.CheckHealth();
-            return srtInput is null ? ownedPlayback : new SrtPlayback(ownedPlayback, srtInput);
+            return ownedPlayback;
         }
         catch (Exception error)
         {
             try
             {
-                try { if (srtInput is not null) await srtInput.DisposeAsync(); }
-                finally
+                if (preparedPlayback is not null)
                 {
-                    if (preparedPlayback is not null)
+                    presenter = null; decoder = null; audio = null;
+                    await preparedPlayback.DisposeAsync();
+                }
+                else if (presenter is not null)
+                {
+                    var failedPresenter = presenter;
+                    await OnUiAsync(() =>
                     {
-                        presenter = null; decoder = null; audio = null;
-                        await preparedPlayback.DisposeAsync();
-                    }
-                    else if (presenter is not null)
-                    {
-                        var failedPresenter = presenter;
-                        await OnUiAsync(() =>
-                        {
-                            if (active != failedPresenter) return;
-                            Attach(panel, 0);
-                            playback = null;
-                            active = null;
-                        });
-                    }
+                        if (active != failedPresenter) return;
+                        Attach(panel, 0);
+                        playback = null;
+                        active = null;
+                    });
                 }
             }
             catch (Exception cleanupError) { throw new AggregateException("Hardware preflight and detach failed.", error, cleanupError); }

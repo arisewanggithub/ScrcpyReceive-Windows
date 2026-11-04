@@ -1,6 +1,7 @@
 param(
     [ValidateSet('arm64', 'x64')][string]$Architecture = 'arm64',
-    [string]$OutputDirectory
+    [string]$OutputDirectory,
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -12,28 +13,29 @@ $platform = if ($Architecture -eq 'arm64') { 'ARM64' } else { 'x64' }
 if (-not (Test-Path -LiteralPath (Join-Path $root "native\win-$Architecture\avcodec-61.dll"))) {
     throw "Pinned hardware decoder runtime missing. Run tools\PrepareNative.ps1 -Architecture $Architecture first."
 }
-foreach ($srtFile in @('avformat-61.dll', 'srt.dll', 'SRT-LICENSE.txt', 'SRT-1.5.7-source.zip', 'SRT-1.5.7-receiver-source.zip',
-    'FFmpeg-LICENSE.txt', 'FFmpeg-copyright.txt', 'FFmpeg-build-dependencies.txt', 'FFmpeg-dependencies.spdx.json',
-    'SRT-runtime-notices\Zig-LICENSE.txt', 'SRT-runtime-notices\libcxx-LICENSE.txt',
-    'SRT-runtime-notices\libcxxabi-LICENSE.txt', 'SRT-runtime-notices\mingw-COPYING.txt')) {
-    if (-not (Test-Path -LiteralPath (Join-Path $root "native\win-$Architecture\$srtFile"))) {
-        throw "Pinned SRT/fMP4 runtime/notice missing: $srtFile. Run tools\PrepareSrt.ps1 -Architecture $Architecture first."
+$nativeFiles = @('avcodec-61.dll', 'avutil-59.dll', 'swresample-5.dll',
+    'FFmpeg-LICENSE.txt', 'FFmpeg-copyright.txt', 'FFmpeg-build-dependencies.txt', 'FFmpeg-dependencies.spdx.json')
+foreach ($file in $nativeFiles) {
+    if (-not (Test-Path -LiteralPath (Join-Path $root "native\win-$Architecture\$file"))) {
+        throw "Pinned decoder runtime/notice missing: $file. Run tools\PrepareNative.ps1 -Architecture $Architecture first."
     }
 }
+$versionArguments = @()
+if ($Version) { $versionArguments += "-p:Version=$Version" }
 & dotnet publish (Join-Path $root 'src\ScrcpyReceive.App\ScrcpyReceive.App.csproj') -c Release `
     -r "win-$Architecture" "-p:Platform=$platform" --self-contained true `
-    -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false -o $OutputDirectory
+    -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false @versionArguments -o $OutputDirectory
 if ($LASTEXITCODE -ne 0) { throw 'Self-contained receiver publish failed.' }
 foreach ($required in @('ScrcpyReceive.App.exe', 'ScrcpyReceive.App.pri', 'coreclr.dll', 'Microsoft.UI.Xaml.dll',
     "native\win-$Architecture\avcodec-61.dll", "native\win-$Architecture\avutil-59.dll", "native\win-$Architecture\swresample-5.dll",
-    "native\win-$Architecture\avformat-61.dll", "native\win-$Architecture\srt.dll",
-    "native\win-$Architecture\SRT-LICENSE.txt", "native\win-$Architecture\SRT-1.5.7-source.zip",
-    "native\win-$Architecture\SRT-1.5.7-receiver-source.zip",
-    "native\win-$Architecture\SRT-runtime-notices\Zig-LICENSE.txt",
-    "native\win-$Architecture\SRT-runtime-notices\libcxx-LICENSE.txt",
-    "native\win-$Architecture\SRT-runtime-notices\libcxxabi-LICENSE.txt",
-    "native\win-$Architecture\SRT-runtime-notices\mingw-COPYING.txt")) {
+    "native\win-$Architecture\FFmpeg-LICENSE.txt")) {
     if (-not (Test-Path -LiteralPath (Join-Path $OutputDirectory $required))) { throw "Missing runtime/resource: $required" }
+}
+$publishedNative = Join-Path $OutputDirectory "native\win-$Architecture"
+$nativeEntries = @(Get-ChildItem -LiteralPath $publishedNative -Force)
+if ($nativeEntries.Count -ne $nativeFiles.Count -or
+    @($nativeEntries | Where-Object { $_.PSIsContainer -or $nativeFiles -notcontains $_.Name }).Count -ne 0) {
+    throw 'Publication contains unexpected native runtime assets.'
 }
 $otherArchitecture = if ($Architecture -eq 'arm64') { 'x64' } else { 'arm64' }
 if (Test-Path -LiteralPath (Join-Path $OutputDirectory "native\win-$otherArchitecture")) {

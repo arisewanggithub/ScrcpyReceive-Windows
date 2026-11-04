@@ -15,6 +15,19 @@ short audio gaps, sheds stale decoded output and does not hold video behind
 audio. Physical stability of the revised policy still needs acceptance testing.
 Failure details include per-track arrival ages/gaps, read waits, receiver
 handling time, inserted recovery silence and discarded decoded samples.
+Peer-reported fatal errors also retain the receiver's own diagnostic snapshot:
+partial TCP payload progress, unread socket bytes, queue occupancy/in-flight
+tracks, and active/maximum read, admission, video, audio and control-write
+durations. Only the eight most recent operations taking at least 100 ms are
+retained, in memory, alongside per-worker maxima; no media payloads are logged.
+These distinguish local processing/backpressure from waiting for input without
+assuming that a sender write stall proves network loss.
+When a socket read makes no progress for 250 ms, the watchdog samples read-only
+Windows TCP counters at most four times per second, retaining eight snapshots.
+These include receive-window/buffer size, kernel bytes received and reordered
+bytes. Local retransmission counters describe receiver-to-sender control
+traffic, not the sender's video retransmissions; zero local retransmissions
+must not be presented as proof of a lossless incoming stream.
 No media is retained by diagnostics; encoded queue limits remain unchanged.
 The first physical low-latency trial kept audio healthy but still exposed video
 backpressure. The current revision also decouples GPU presentation, uses
@@ -71,8 +84,8 @@ frames; they do not add a timed playback buffer.
 
 - Automatic listening on app launch, actual IPv4 endpoints, UDP v3 discovery on
   27183, TCP control on 27184, one active negotiation and authoritative BUSY.
-- Strict 40-byte SCPY framing, bounded allocation/JSON, peer-pinned SRT
-  descriptor validation, setup/read/write cancellation, PING/PONG and STOP.
+- Strict 40-byte SCPY framing, bounded allocation/JSON, setup/read/write
+  cancellation, PING/PONG and STOP over the same TCP connection.
 - Ordered track generations, readiness barriers, PCM alignment and Opus PTS
   exception; receiver queue bounds enforced before insertion.
 - Passive WinUI receiver: no start/stop/disconnect/probe/fullscreen buttons.
@@ -84,6 +97,20 @@ frames; they do not add a timed playback buffer.
   not to the waiting page. The waiting page returns when casting ends.
   Shortcuts use preview/tunneling key routing so child controls cannot consume
   Enter before the player sees it.
+- The borderless waiting screen uses the full page: branding toward the top,
+  a compact readiness badge and addresses in the main area, and a footer at the bottom.
+  It shows
+  a large selectable endpoint for a single address. Multiple addresses use
+  separately labeled adapter rows; window width, height and address count adapt
+  typography, icon size and spacing. Addresses wrap rather than shrinking
+  arbitrarily, and long lists remain vertically scrollable. Friendly states distinguish
+  starting, connecting, missing network, stopped playback and listener failure.
+  No About or Connection details panels clutter the home page. A small footer
+  shows the installed package version, or explicit application build metadata
+  when unpackaged; bounded diagnostics
+  remain in memory for developer self-test reports. The navy/mint dark palette, light palette and
+  high-contrast system colors follow Windows; the native title bar follows
+  the current app theme. Fullscreen/player-only behavior remains unchanged.
 - Bounded in-memory connection details, visible startup/discovery errors and
   actual hardware decoder preflight before accepting a compatible request.
 - DPI-aware logical launch sizing, monitor work-area bounds, minimum sizes,
@@ -131,20 +158,16 @@ unchanged, and does not disable the firewall or override organization policy.
   using an explicit identity. No PDBs, Store credentials or submission.
 
 **Select H.264, HEVC/H.265 or AV1 / custom TCP; audio may be enabled.**
-Explicit SRT/fMP4 also supports these video codecs, with optional AAC-LC or Opus audio.
-SRT rotation translates valid in-band codec/dimension changes into new hardware
-decoder generations at random-access pictures, without restarting audio.
-Unchanged repeated headers do not reconfigure playback; TCP still requires
-explicit configuration generations.
+TCP media uses explicit configuration generations. A present `mediaTransport`
+override is rejected before accepting capture; external media URLs are not used.
 Forced receiver-orientation requests still receive
 `UNSUPPORTED_CONFIG` before acceptance. There is no codec, transport or
 audio-off substitution. Unsupported actual codec configurations fail explicitly
 before STREAM_READY. Hardware initialization failure rejects before capture.
 The first actual video presentation has a 10-second startup deadline; a ready
-codec and live PONGs do not count as rendering. SRT acceptance is explicit and
-never substitutes TCP. `srt-playing` follows a real presented video picture
-and advancing actual source audio when enabled, not decoder initialization
-or generated recovery silence.
+codec and live PONGs do not count as rendering. Repeated video or audio
+configurations cannot extend this initial deadline. Later reconfiguration
+retains the session's actual presentation history.
 
 Use ONLY on a trusted private LAN: the compatible protocol is unauthenticated
 and unencrypted. Do not expose ports to the internet. Firewall permissions are
@@ -158,18 +181,21 @@ build tools from NuGet; a separate C++ installation is not needed.
 ```powershell
 dotnet test .\tests\ScrcpyReceive.Tests\ScrcpyReceive.Tests.csproj -c Release
 .\tools\PrepareNative.ps1 -Architecture arm64
-.\tools\PrepareSrt.ps1 -Architecture arm64
 dotnet build .\src\ScrcpyReceive.App\ScrcpyReceive.App.csproj -c Release -p:Platform=ARM64 -r win-arm64
 dotnet run --project .\src\ScrcpyReceive.App\ScrcpyReceive.App.csproj -c Release -p:Platform=ARM64 -r win-arm64
 .\tools\Publish.ps1 -Architecture arm64
 .\tools\PrepareNative.ps1 -Architecture x64
-.\tools\PrepareSrt.ps1 -Architecture x64
 .\tools\Publish.ps1 -Architecture x64
 ```
 
 Use `-p:Platform=x64 -r win-x64` for an x64 build. Publish/package output must
 be new or empty to preserve previous work. An unsigned executable may be
 blocked by Windows policy; do not disable protections to run it.
+The default source build version is set in `Directory.Build.props`.
+For a release, pass `-Version MAJOR.MINOR.PATCH` to `tools\Publish.ps1` and
+the matching `MAJOR.MINOR.PATCH.0` to `tools\Package.ps1`. Packaging refuses
+different assembly/package versions. The footer reads package identity when
+installed and build metadata when unpackaged; nonzero package revisions remain visible.
 See [Store preparation](STORE.md); this limited preview is not ready for Store
 submission. No existing sender Store product is used or modified.
 
@@ -188,7 +214,7 @@ three video codecs. They do not capture a real display or exercise real mute.
 
 ### Executed locally
 
-- 219 tests passed, covering AAC/Opus SRT acceptance/readiness/EOF/STOP, endpoint presentation, HEVC/AV1 profiles/bitstreams, playback power-request ownership/release, remote STOP retirement, adaptive audio target bounds/growth/shrink, queue dwell timing, bounded burst admission/cancellation, per-track arrival/read diagnostics, audio configuration/output-clock invariants,
+- The TCP unit/loopback/UI-policy suite covers bounded activity/kernel-counter history, partial-read progress and receiver evidence on sender fatal errors, adaptive single/multiple-address layout, local-only adapter labels, friendly receiver states, theme/layout structure, transport-override rejection before playback, endpoint presentation, HEVC/AV1 profiles/bitstreams, playback power-request ownership/release, remote STOP retirement, adaptive audio target bounds/growth/shrink, queue dwell timing, bounded burst admission/cancellation, per-track arrival/read diagnostics, audio configuration/output-clock invariants,
   independent track scheduling, High-profile scaling/chroma/bit-depth validation,
   GPU-health failure propagation, UDP socket reuse/shutdown, real loopback
   sockets, keyboard/button-free UI policy, bitstream validation,
@@ -209,59 +235,35 @@ three video codecs. They do not capture a real display or exercise real mute.
   Latest-picture presentation, STOP cleanup and display-power release passed.
   These were hardware-encoded synthetic sources; physical Android HEVC/AV1
   acceptance remains pending.
-- Actual Windows sender SRT/fMP4 loopback checks passed H.264 video-only,
-  H.264/AAC, HEVC/AAC and AV1/AAC through the WinUI hardware renderer.
-  They verified explicit SRT acceptance, real `srt-playing`, advancing
-  source audio, STOP/SESSION_END, display-power release and output detachment.
-  Synthetic sources were used; no desktop/phone audio or screen was captured.
-- Five additional actual-SRT WinUI rotation cases passed: H.264, HEVC and AV1
-  with AAC, plus partial-parameter-set H.264/HEVC updates. Each completed
-  landscape/portrait/landscape with exactly three hardware video configurations,
-  advancing source audio, STOP/SESSION_END and display-power cleanup.
-  Five matching demux-only rotation regressions also passed. Physical phone
-  rotation acceptance of this fix remains pending.
-- A subsequent physical HEVC/AAC freeze exposed an overdue-loss wait bug in
-  the bundled SRT 1.5.7 receive thread: it could spin under the receive lock,
-  stop consuming media and prevent cancellation. A scoped native fix retains
-  reliable fMP4 delivery and the requested latency; it does not drop container
-  bytes or enlarge queues. Its modified corresponding MPL source is bundled.
-  All eleven native SRT cases passed, including 400-ms sequence-loss recovery
-  and STOP while a sequence remains missing and the peer stays connected.
-  The latter reproduced a deadline failure in the old runtime. Physical phone
-  acceptance of the receive-wait fix remains pending.
-- Five SRT Opus WinUI cases passed: H.264, HEVC rotation, AV1, mono with
-  nonzero gain, and packet-loss recovery. All sixteen native SRT cases passed.
-  Separate native demux/decode regressions verified MP4 dOps channels/gain,
-  exactly-once 312-sample pre-skip and 6-dB gain, and AAC/Opus mismatch rejection.
-  Opus sources were synthetic, using a test-only FFmpeg muxer and libsrt
-  listener; the Windows sender's AAC-only implementation was not changed.
-  Physical Android SRT/Opus acceptance remains pending.
-- SRT MP4 metadata rejects compressed movies before native parsing, including
-  nested containers, sample-entry extensions and fragment metadata. Twenty-two
-  managed admission regressions and two real loopback SRT/custom-AVIO rejection
-  cases passed without attempting large native allocations. Invalid metadata
-  is never published into the AVIO pending buffer, and read failures remain
-  terminal with explicit protocol errors.
 - Native H.264, HEVC and AV1 backlog regressions each decoded/presented 32
   pictures while one already-observed encoded picture remained pending;
-  four intermediate checkpoints confirmed continuing presentation. All
-  sixteen SRT playback regressions still passed. Initial SRT readiness now
-  expires after ten seconds without advancing requested source audio, even
-  with healthy PONGs and repeated video reconfiguration. A post-readiness
-  static-playback regression remained active beyond that initial deadline.
-- SRT acceptance now checks timestamped presentation count and source PTS
-  throughout the post-readiness interval, including its final segment and
-  after injected loss recovery. All sixteen native cases passed these stronger
-  checks; the deliberately unrecovered-gap case tests STOP rather than playback
-  recovery. Ten additional CI unit regressions reject startup-only/late video
-  freezes, missing tail evidence, unchanged source pictures and unproven loss
-  recovery. Advancing decoding/audio alone no longer qualifies as video progress.
-- Thirty-one targeted listener/SRT lifecycle regressions passed after extending
-  the immutable first-video deadline to TCP. Repeated video/audio configurations
+  four intermediate checkpoints confirmed continuing presentation.
+- TCP lifecycle regressions enforce the immutable first-video deadline.
+  Repeated video/audio configurations
   cannot hold an unstarted cast indefinitely; a previously presented picture
-  remains recorded across later generations. AAC/Opus readiness tests also
-  verify that audio reconfiguration resets its comparison baseline, suppresses
-  readiness while configuring, and accepts fresh low-count source advancement.
+  remains recorded across later generations.
+- A clean TCP-only publication passed eleven native checks: UI/listener
+  lifecycle, H.264 and High-profile playback, HEVC, AV1, PCM/AAC/Opus audio,
+  and encoded-backlog presentation for all three video codecs. ARM64/x64
+  packaging permits only the decoder/audio native libraries and their notices;
+  extra native runtime assets fail publication or packaging.
+- Native UI checks also verify full-page waiting geometry and bottom footer, light/dark
+  palette updates, actual build-version footer, friendly rejection text and
+  reachable addresses in a small high-DPI window. High-contrast resource
+  structure is unit-tested; system high contrast is not enabled automatically.
+- Adaptive native checks use synthetic loopback endpoints to verify readable
+  multi-adapter rows and scrolling in a compact window, then transition through
+  no-network and single-address connecting states without changing network settings.
+  Adapter labels are local UI metadata only; discovery wire packets are unchanged.
+- Initial address-enumeration failure ends the startup indicator and shows
+  network/reopen guidance while preserving the open TCP listener. Transient
+  broadcast warnings remain distinct; known addresses can still be entered
+  manually after discovery stops. UI-state regressions and a native view check
+  cover the terminal failure without changing system network settings.
+- The waiting page is arranged directly by its ScrollViewer viewport, without
+  rewriting minimum height during resize. Adaptive metrics are applied only
+  when they change. Native checks exercise repeated maximize/restore and verify
+  restored window size, viewport fit and footer placement without stale overflow.
 - Native ARM64 WinUI tests cover automatic listening, real endpoint display,
   loopback HELLO/rejection, playback-gated Enter/F/Esc and owned shutdown.
   Native video-only/audio and one-minute playback checks also verified Windows
@@ -308,7 +310,7 @@ three video codecs. They do not capture a real display or exercise real mute.
   identity, primary native-PE architecture and no-PDB checks passed.
 - Shared site's four static pages and their local links validated.
 
-GitHub CI is configured but has not run remotely. The x64 UI has not been
+GitHub CI builds/tests and validates packages for ARM64 and x64. The x64 UI has not been
 launched on an x64 device. The owner confirmed real Android H.264 video and initial Raw audio.
 Sustained physical playback of the low-latency revision, receiver Store
 reservation/submission and website deployment remain unverified/unperformed.
@@ -371,16 +373,7 @@ Received D3D11 frames remain GPU surfaces, not CPU-readback/completion waits.
    Video remains immediate rather than audio-master gated. Source-order Opus
    observations and pre-skip/gain are preserved. Actual source-audio counters
    exclude generated silence. Continue physical long-duration acceptance.
-4. **Explicit SRT/fMP4 (preview implemented):** pinned and licensed ARM64/x64 libsrt/demux stack,
-   numeric control-peer and stream-ID pinning, one init plus ~100 ms fragments,
-   avc3/hev1/av01 changes and AAC/Opus. Keep control/liveness independent. Send
-   `srt-playing` only after a real rendered video frame AND advancing enabled
-   audio. Never fall back to TCP or mute on mere connection/codec readiness.
-   The caller pins the numeric media peer and stream ID from the accepted
-   control session. FFmpeg uses an owned, bounded custom input rather than
-   opening arbitrary demuxer URLs. STOP cancels transport/demux before output
-   disposal and acknowledgment. EOF without control STOP is fatal.
-5. **Device/Store acceptance:** actual Windows and Android sender playback,
+4. **Device/Store acceptance:** actual Windows and Android sender playback,
    static video with continuing audio, stop/disconnect/recast, no leaked
    workers, hardware failures, both architectures, signed package validation,
    accessibility and owner-reviewed privacy/licensing/Store declarations.
@@ -395,7 +388,7 @@ reported Android kernel-panic risk.
 
 Implementation was derived independently from the paired v3 wire contract and
 inspection of Windows sender `Protocol`, `SenderSession`, packaging and Android
-receiver `ReceiverServer`, `Configuration`, track/readiness and SRT contracts.
+receiver `ReceiverServer`, `Configuration` and track/readiness contracts.
 No sender/Android implementation source or personal configuration is vendored.
 Native libraries are downloaded from the same public checksum-pinned LGPL
 release used by the sender, not copied from private build directories.

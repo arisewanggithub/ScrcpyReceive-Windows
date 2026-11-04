@@ -7,10 +7,12 @@ receiver audio/video preview, not the Windows sender or Android applications.
   check, crash upload or cloud streaming service.
 - Listening starts automatically when the app is opened. It exposes TCP 27184 on IPv4 interfaces
   and broadcasts the receiver label, protocol version, port and availability
-  every two seconds over local UDP 27183. It displays local IP addresses.
+  every two seconds over local UDP 27183. It displays local IP addresses and,
+  when several are available, local network-adapter labels. Adapter labels
+  remain in memory and are not included in discovery advertisements.
 - The advertised label is the product name, not a computer or user name.
 - Incoming peer addresses, HELLO labels and requested stream settings are
-  processed in memory. Compatible custom TCP or explicit SRT/fMP4 H.264, HEVC or AV1 casts are decoded
+  processed in memory. Compatible custom TCP H.264, HEVC or AV1 casts are decoded
   on the GPU and displayed in the window or fullscreen. Video stays in bounded
   memory; the app does not save recordings or upload it to a developer service.
 - Optional PCM, AAC-LC or Opus audio is decoded in bounded memory and played
@@ -20,12 +22,12 @@ receiver audio/video preview, not the Windows sender or Android applications.
   Short delivery gaps may produce recovery silence; stale decoded output may
   be discarded to keep buffering bounded. These operations happen in memory
   and do not record or upload media.
-- Explicit SRT media connects only to the numeric control peer with the
-  accepted session stream ID. SRT audio is optional AAC-LC or Opus; no transport
-  fallback or arbitrary media URL/file access is used.
-  No microphone, screen capture, remote input or clipboard service.
-- Diagnostics, including remote error messages and networking failures, are
-  displayed in a bounded in-memory list. The normal app does not save logs,
+- Control and media share the accepted TCP connection. Transport overrides and
+  arbitrary media URLs/files are not accepted. No microphone, screen capture,
+  remote input or clipboard service.
+- Diagnostics, including remote error messages and networking failures, remain
+  in a bounded in-memory list; the UI shows actionable error summaries.
+  The normal app does not save logs,
   settings, addresses, media, credentials or session trust to disk.
   Explicit developer self-tests may write a report only to the caller's
   requested report file. Review/redact any report before sharing it.

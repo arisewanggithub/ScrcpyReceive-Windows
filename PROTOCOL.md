@@ -17,16 +17,19 @@ The label is 1..80 characters; source IP is authoritative. Busy holds the
 single negotiation/session slot; it never evicts another session. Discovery
 failures are shown explicitly; manual TCP remains possible. A changed set of
 interface addresses disconnects a cast. IPv6 discovery/listening is not yet
-implemented in the application, although descriptor parsing handles IPv6.
+implemented in the application.
 
 TCP_NODELAY, plain TCP. HELLO role sender/name/versions [3] at session 0,
 receiver HELLO reply; positive signed-64 SESSION_REQUEST next. Unknown JSON
 fields are ignored, never used as identity. Version arrays have 1..16 integers.
-There is no authentication or encryption; stream IDs are routing, not identity.
+There is no authentication or encryption; session IDs are routing, not identity.
 Capture must wait for SESSION_ACCEPT. This preview accepts custom TCP H.264, HEVC Main or AV1 Profile 0,
 optional PCM/AAC-LC/Opus audio, auto receiver orientation, 1..60 FPS after
 video hardware and audio-output preflight.
 Other requests reject with UNSUPPORTED_CONFIG; no substitutions.
+Control, configuration and media use the same TCP connection. A present
+`mediaTransport` override is rejected with UNSUPPORTED_CONFIG regardless of its
+value; it is never ignored or reinterpreted as TCP.
 
 ## Framing
 
@@ -90,55 +93,6 @@ separate. Overflow terminates with CONGESTION, never arbitrary media dropping.
 Configuration/media preserve FIFO within each independent track, so a video
 clock wait cannot prevent audio processing. Old data drains before reconfigure;
 PING/PONG/STOP bypass the media queue via a serialized control writer.
-
-## SRT
-
-A present `mediaTransport` never means TCP. Validate exactly kind/container/url/
-latencyMs/streamId: `srt`, `fmp4`, numeric URL with explicit port, no path,
-userinfo/query/fragment, latency 20..2000, `sc-` + session as 16 lowercase hex.
-URL address must equal the actual TCP control peer, IPv6 bracketed.
-SRT accepts optional AAC-LC stereo or Opus mono/stereo at 48 kHz, not PCM. Acceptance includes
-`mediaTransport: {"kind":"srt"}` plus exactly the requested tracks. No TCP
-STREAM_CONFIG/STREAM_READY/media packets are exchanged in SRT mode.
-An owned libsrt caller feeds bounded custom AVIO/fMP4 demuxing; avc3/hev1
-length-prefixed samples are converted to Annex B, and av01 remains sized OBUs.
-Compressed movie (`cmov`) metadata is rejected in managed code before FFmpeg
-receives it, including nested containers, sample-entry extensions and fragment
-metadata. Metadata nesting remains bounded; only the supported avc3/hev1/av01/
-mp4a/Opus sample entries and version-zero ISO audio/metadata headers are accepted.
-Image-container property metadata is unsupported in this live-video path.
-Internal configurations use the same validated hardware/audio resources and
-generation barriers as TCP. Control PING/PONG/STOP remain independent.
-MP4 Opus requires the `Opus` sample entry and a canonical mapping-family-0
-OpusHead reconstructed by the demuxer from dOps. Channels, pre-skip and output
-gain are preserved. Internal configuration supplies matching codec delay and
-80-ms seek preroll; the existing audio decoder applies pre-skip and gain once.
-Container skip side data is not forwarded into a second trimming path.
-Actual audio codec/tag/channels must match the request; no AAC/Opus substitution.
-Valid in-band avc3/hev1 parameter-set changes are merged by ID and translated
-into internal video generations before the changed random-access picture.
-AV1 sequence and frame-dimension changes likewise create internal generations,
-including rotated frames under an unchanged sequence size limit.
-Repeated unchanged headers do not reconfigure playback; stale initialization
-metadata does not revert an in-band update. Unsupported configurations and
-changes without random access fail explicitly. TCP still requires declared
-STREAM_CONFIG generations and rejects undeclared parameter changes.
-STATUS `srt-playing` is emitted once after a real presented GPU picture and
-advancing source-audio output when enabled. Recovery silence is not readiness.
-Audio advancement is compared within one completed configuration generation;
-an audio counter reset discards the previous baseline, and configuration-in-
-progress cannot announce readiness. This does not restart the session deadline.
-Initial readiness must complete within ten seconds of acceptance, even when
-video and control traffic are healthy. Reconfiguration cannot extend that
-initial deadline. Once ready, static video does not acquire a media-age timeout.
-STOP cancels input, waits for input/track workers, disposes output and only then
-acknowledges SESSION_END. A short EOF/control-STOP race is allowed; otherwise
-unexpected live EOF is fatal. TCP fallback/substitution is rejected.
-SRT late-packet dropping is disabled: dropping arbitrary fMP4 bytes would corrupt
-the reliable container stream. The bundled native runtime includes a scoped
-1.5.7 receive-wait fix: overdue sequence gaps wait for retransmission/closure,
-instead of spinning under the receive lock and blocking reads/cancellation.
-The requested SRT latency and encoded queue limits are unchanged.
 
 ## Lifetime
 

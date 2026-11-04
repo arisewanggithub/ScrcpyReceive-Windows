@@ -1,4 +1,3 @@
-using System.Collections.ObjectModel;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -13,8 +12,11 @@ namespace ScrcpyReceive.App;
 
 public sealed partial class MainWindow : Window
 {
-    private sealed record VideoPresentationSample(long TimestampTicks, long PresentedFrames, long SourcePtsUs);
-    private readonly ObservableCollection<string> notices = [];
+    private sealed record AddressRow(string Adapter, string Endpoint, double FontSize);
+    private IReadOnlyList<AddressRow> addressRows = [];
+    private ReceiverHomeLayout? appliedHomeLayout;
+    private readonly List<string> notices = [];
+    private ReceiverUiState screen = new();
     private ReceiverServer? server;
     private bool closing;
     private readonly bool isolatedTest;
@@ -29,12 +31,12 @@ public sealed partial class MainWindow : Window
         this.isolatedTest = isolatedTest;
         InitializeComponent();
         Title = "ScrcpyReceive-Windows";
-        Diagnostics.ItemsSource = notices;
+        VersionText.Text = AppVersion.Current().Label;
         video = new(VideoSurface, detail => Notice(new("Video", detail)));
         layout = new(this, LayoutRoot, error => Notice(new("Window layout failed", error.Message)));
-        MilestoneText.Text = "Low-latency H.264 / HEVC / AV1 - TCP and SRT/fMP4 preview";
-        CapabilityInfo.Title = "Hardware video and audio";
-        CapabilityInfo.Message = video.Description + " Unsupported requests fail explicitly; no software video fallback.";
+        RenderScreen();
+        WindowRoot.ActualThemeChanged += (_, _) => UpdateTitleBarTheme();
+        UpdateTitleBarTheme();
         AppWindow.Closing += OnClosing;
         WindowRoot.Loaded += (_, _) => PageScroll.Focus(FocusState.Programmatic);
         Closed += (_, _) => { video.Dispose(); layout.Dispose(); };
@@ -45,26 +47,77 @@ public sealed partial class MainWindow : Window
         void Apply()
         {
             if (generation.HasValue && generation.Value != listenerGeneration) return;
-            if (notice.ListeningEndpoints is not null)
-                AddressesText.Text = string.Join("   |   ", notice.ListeningEndpoints);
-            if (notice.State == "Initializing") Problem.IsOpen = false;
-            StatusText.Text = notice.State;
+            screen = screen.Apply(notice);
             notices.Add($"{DateTime.Now:T} {notice.State}: {notice.Detail}");
             while (notices.Count > 100) notices.RemoveAt(0);
-            UpdatePresentation();
-            if (notice.State is "Start failed" or "Listener failed" or "Discovery warning" or "Discovery failed" or "Sender error" or "Cleanup failed" or
-                "UNSUPPORTED_CONFIG" or "DECODER_FAILED" or "AUDIO_FAILED" or "TIMEOUT" or "CONGESTION" or "PROTOCOL" or "INTERNAL")
-            {
-                Problem.Title = notice.State;
-                Problem.Message = notice.Detail;
-                Problem.IsOpen = true;
-            }
+            RenderScreen();
         }
         if (DispatcherQueue.HasThreadAccess) Apply();
         else DispatcherQueue.TryEnqueue(Apply);
     }
 
     internal Task InitializeAsync() => startup ??= StartAsync();
+
+    private void UpdateTitleBarTheme() => AppWindow.TitleBar.PreferredTheme =
+        new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast ? TitleBarTheme.UseDefaultAppMode :
+        WindowRoot.ActualTheme == ElementTheme.Dark ? TitleBarTheme.Dark : TitleBarTheme.Light;
+
+    private void RenderScreen()
+    {
+        if (video.IsPlaying && screen.Connecting) screen = screen with { Connecting = false };
+        StatusText.Text = screen.Status;
+        WaitingHint.Text = screen.Hint;
+        var addressesVisible = screen.ListenerOpen && screen.Addresses.Count > 0;
+        AddressesText.Text = screen.Addresses.Count == 1 ? screen.Addresses[0] : "";
+        AddressDisplay.Visibility = addressesVisible ? Visibility.Visible : Visibility.Collapsed;
+        AddressLabel.Visibility = addressesVisible ? Visibility.Visible : Visibility.Collapsed;
+        AddressPlaceholder.Visibility = addressesVisible ? Visibility.Collapsed : Visibility.Visible;
+        AddressPlaceholder.Text = screen.Phase == ReceiverUiPhase.Starting
+            ? "Checking network addresses..." : screen.Phase == ReceiverUiPhase.NoNetwork
+                ? "No local network address" : screen.Phase == ReceiverUiPhase.DiscoveryUnavailable
+                    ? "Network addresses unavailable" : "Not listening";
+        var busy = screen.Phase is ReceiverUiPhase.Starting or ReceiverUiPhase.Connecting;
+        ConnectionProgress.IsActive = busy;
+        ConnectionProgress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        ReadyIndicator.Visibility = screen.Phase == ReceiverUiPhase.Ready ? Visibility.Visible : Visibility.Collapsed;
+        AttentionIndicator.Visibility = !busy && screen.Phase != ReceiverUiPhase.Ready ? Visibility.Visible : Visibility.Collapsed;
+        Problem.Title = screen.ProblemTitle;
+        Problem.Message = screen.ProblemMessage;
+        Problem.Severity = screen.IsWarning ? InfoBarSeverity.Warning : InfoBarSeverity.Error;
+        Problem.IsOpen = screen.ProblemCode is not null;
+        UpdateHomeLayout();
+        UpdatePresentation();
+    }
+
+    private void WindowRoot_SizeChanged(object sender, SizeChangedEventArgs args) => UpdateHomeLayout();
+
+    private void UpdateHomeLayout()
+    {
+        if (WindowRoot.ActualWidth <= 0 || WindowRoot.ActualHeight <= 0) return;
+        var sizing = ReceiverHomeLayout.ForViewport(WindowRoot.ActualWidth, WindowRoot.ActualHeight, screen.Addresses.Count);
+        if (appliedHomeLayout != sizing)
+        {
+            LayoutRoot.Padding = new Thickness(sizing.OuterPadding);
+            LayoutRoot.RowSpacing = sizing.Spacing;
+            HomeContent.Spacing = sizing.Spacing;
+            ReceiverIconBox.Width = ReceiverIconBox.Height = sizing.IconSize;
+            ReceiverIcon.FontSize = sizing.IconSize * 0.47;
+            BrandText.FontSize = sizing.TitleSize;
+            AddressesText.FontSize = sizing.AddressSize;
+            appliedHomeLayout = sizing;
+        }
+        AddressLabel.Text = sizing.MultipleAddresses ? "THIS PC'S ADDRESSES" : "THIS PC'S ADDRESS";
+        AddressesText.Visibility = sizing.MultipleAddresses ? Visibility.Collapsed : Visibility.Visible;
+        AddressRows.Visibility = sizing.MultipleAddresses ? Visibility.Visible : Visibility.Collapsed;
+        var next = sizing.MultipleAddresses ? screen.Addresses.Select((endpoint, index) => new AddressRow(
+            screen.AdapterLabels.TryGetValue(endpoint, out var label) && !string.IsNullOrWhiteSpace(label)
+                ? label : $"Network connection {index + 1}", endpoint, sizing.AddressSize)).ToArray() : [];
+        if (!addressRows.SequenceEqual(next))
+        {
+            addressRows = next;
+            AddressRows.ItemsSource = next;
+        }
+    }
 
     private async Task StartAsync()
     {
@@ -78,14 +131,13 @@ public sealed partial class MainWindow : Window
                 isolatedTest ? IPAddress.Loopback : IPAddress.Any);
             candidate.Start(advertise: !isolatedTest);
             server = candidate;
-            AddressesText.Text = isolatedTest ? $"{Discovery.DisplayEndpoint(IPAddress.Loopback, server.Port)} (isolated self-test)"
-                : $"TCP {server.Port}; refreshing current interface addresses...";
+            if (isolatedTest)
+                Notice(new("Listening", "Isolated loopback listener.", [Discovery.DisplayEndpoint(IPAddress.Loopback, server.Port)]));
         }
         catch (Exception error) when (error is SocketException or ArgumentException or System.Net.NetworkInformation.NetworkInformationException)
         {
             if (candidate is not null) await candidate.DisposeAsync();
             server = null;
-            AddressesText.Text = "Not listening";
             Notice(new("Start failed", error.Message +
                 " Close any other receiver using TCP 27184, then close and reopen this app. Allow this app on trusted Private networks in Windows Firewall."));
         }
@@ -101,8 +153,8 @@ public sealed partial class MainWindow : Window
         finally
         {
             server = null;
-            AddressesText.Text = "Not listening";
-            StatusText.Text = "Stopped";
+            screen = screen.Apply(new("Stopped", "Listener closed."));
+            RenderScreen();
             if (AppWindow.Presenter.Kind == AppWindowPresenterKind.FullScreen) SetFullscreen(false);
         }
     }
@@ -184,6 +236,69 @@ public sealed partial class MainWindow : Window
             if (HandleShortcut(Windows.System.VirtualKey.F) || HandleShortcut(Windows.System.VirtualKey.Enter))
                 throw new InvalidOperationException("Idle receiver must not enter fullscreen.");
             checks.Add("Automatic startup is idempotent; idle Enter/F do not enter fullscreen");
+            if (screen.Phase != ReceiverUiPhase.Ready || StatusText.Text != "Ready to receive" ||
+                AddressDisplay.Visibility != Visibility.Visible)
+                throw new InvalidOperationException("Waiting-page readiness or prominent address is incorrect.");
+            var expectedVersion = AppVersion.Current();
+            if (VersionText.Text != expectedVersion.Label)
+                throw new InvalidOperationException("Footer version does not match the installed package or explicit build metadata.");
+            checks.Add($"Friendly ready state, prominent selectable endpoint and actual {expectedVersion.Source} version in the footer");
+            await Task.Delay(100);
+            PageScroll.UpdateLayout();
+            var homeBounds = LayoutRoot.TransformToVisual(PageScroll).TransformBounds(new Windows.Foundation.Rect(0, 0,
+                LayoutRoot.ActualWidth, LayoutRoot.ActualHeight));
+            if (Math.Abs(homeBounds.Left) > 2 || Math.Abs(homeBounds.Width - PageScroll.ViewportWidth) > 2 ||
+                homeBounds.Height < PageScroll.ViewportHeight - 2)
+                throw new InvalidOperationException($"Waiting layout does not fill the page: x={homeBounds.Left}, y={homeBounds.Top}, " +
+                    $"size={homeBounds.Width}x{homeBounds.Height}, viewport={PageScroll.ViewportWidth}x{PageScroll.ViewportHeight}.");
+            var footerBounds = FooterGroup.TransformToVisual(PageScroll).TransformBounds(
+                new Windows.Foundation.Rect(0, 0, FooterGroup.ActualWidth, FooterGroup.ActualHeight));
+            if (PageScroll.ScrollableHeight < 1 &&
+                Math.Abs(footerBounds.Bottom + LayoutRoot.Padding.Bottom - PageScroll.ViewportHeight) > 2)
+                throw new InvalidOperationException("Version footer did not stay at the bottom of the full-page layout.");
+            checks.Add("Borderless waiting page fills the viewport with branding above and version footer at the bottom");
+            if (LayoutRoot.MinHeight != 0)
+                throw new InvalidOperationException("Waiting-page height must be arranged by the viewport, not a resize-driven minimum height.");
+            if (AppWindow.Presenter is not OverlappedPresenter windowPresenter)
+                throw new InvalidOperationException("Waiting page must use the normal Windows presenter.");
+            var originalWindowSize = AppWindow.Size;
+            for (var transition = 0; transition < 4; transition++)
+            {
+                if (transition % 2 == 0) windowPresenter.Maximize();
+                else windowPresenter.Restore();
+                await Task.Delay(150);
+                PageScroll.UpdateLayout();
+                var resizedBounds = LayoutRoot.TransformToVisual(PageScroll).TransformBounds(
+                    new Windows.Foundation.Rect(0, 0, LayoutRoot.ActualWidth, LayoutRoot.ActualHeight));
+                var resizedFooter = FooterGroup.TransformToVisual(PageScroll).TransformBounds(
+                    new Windows.Foundation.Rect(0, 0, FooterGroup.ActualWidth, FooterGroup.ActualHeight));
+                if (LayoutRoot.MinHeight != 0 || Math.Abs(resizedBounds.Width - PageScroll.ViewportWidth) > 2 ||
+                    Math.Abs(resizedBounds.Height - PageScroll.ViewportHeight) > 2 || PageScroll.ScrollableHeight > 1 ||
+                    Math.Abs(resizedFooter.Bottom + LayoutRoot.Padding.Bottom - PageScroll.ViewportHeight) > 2)
+                    throw new InvalidOperationException("Maximize/restore retained stale page height or misplaced the footer.");
+            }
+            if (Math.Abs(AppWindow.Size.Width - originalWindowSize.Width) > 2 ||
+                Math.Abs(AppWindow.Size.Height - originalWindowSize.Height) > 2)
+                throw new InvalidOperationException("Maximize/restore changed the original restored window size.");
+            checks.Add("Repeated maximize/restore uses viewport arrangement without stale height, overflow or footer displacement");
+            var requestedTheme = WindowRoot.RequestedTheme;
+            try
+            {
+                if (!new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast)
+                {
+                    foreach (var theme in new[] { ElementTheme.Light, ElementTheme.Dark })
+                    {
+                        WindowRoot.RequestedTheme = theme;
+                        await Task.Delay(100);
+                        if (PageScroll.Background is not Microsoft.UI.Xaml.Media.LinearGradientBrush background ||
+                            (theme == ElementTheme.Light ? background.GradientStops[0].Color.R < 200 : background.GradientStops[0].Color.R > 60))
+                            throw new InvalidOperationException("Waiting-page palette did not follow the requested theme.");
+                    }
+                    checks.Add("Native light/dark theme resources update the waiting-page palette");
+                }
+                else checks.Add("Active high-contrast system colors retained");
+            }
+            finally { WindowRoot.RequestedTheme = requestedTheme; }
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             using var client = new System.Net.Sockets.TcpClient();
             await client.ConnectAsync(IPAddress.Loopback, server.Port, timeout.Token);
@@ -198,13 +313,66 @@ public sealed partial class MainWindow : Window
             if (rejection.Type != PacketType.Reject || JsonObject.Text(rejection.Object(), "code") != "UNSUPPORTED_CONFIG")
                 throw new InvalidOperationException("Unsupported request was not rejected.");
             checks.Add("Real loopback HELLO and explicit rejection");
-            if (!AddressesText.Text.Contains($" : {server.Port}", StringComparison.Ordinal) &&
-                !AddressesText.Text.StartsWith($"TCP {server.Port}; no active", StringComparison.Ordinal))
+            if (!AddressesText.Text.Contains($" : {server.Port}", StringComparison.Ordinal) ||
+                !Problem.IsOpen || Problem.Message.Contains("UNSUPPORTED_CONFIG", StringComparison.Ordinal))
                 throw new InvalidOperationException("Actual listener address display was not refreshed.");
             var originalSize = AppWindow.Size;
             var scale = LayoutRoot.XamlRoot.RasterizationScale;
             AppWindow.Resize(new Windows.Graphics.SizeInt32((int)Math.Ceiling(560 * scale) + 32, (int)Math.Ceiling(420 * scale) + 80));
             await Task.Delay(100);
+            var actualState = screen;
+            try
+            {
+                var endpoints = new[] { "127.0.0.1 : 27184", "127.0.0.2 : 27184", "127.0.0.3 : 27184", "127.0.0.4 : 27184" };
+                screen = new ReceiverUiState().Apply(new("Listening", "Synthetic adapter layout.", endpoints,
+                    endpoints.Select((endpoint, index) => (endpoint, label: $"Synthetic connection {index + 1}"))
+                        .ToDictionary(item => item.endpoint, item => item.label)));
+                RenderScreen();
+                await Task.Delay(150);
+                PageScroll.UpdateLayout();
+                if (AddressRows.Visibility != Visibility.Visible || AddressesText.Visibility != Visibility.Collapsed ||
+                    addressRows.Count != 4 || addressRows.Any(row => row.FontSize < 22 || !row.Adapter.StartsWith("Synthetic", StringComparison.Ordinal)) ||
+                    PageScroll.ScrollableHeight <= 0)
+                    throw new InvalidOperationException("Multiple-adapter compact layout did not retain readable labeled rows and scrollable overflow.");
+                var lastRow = AddressRows.ContainerFromIndex(3) as FrameworkElement
+                    ?? throw new InvalidOperationException("Last adapter row was not materialized.");
+                lastRow.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+                await Task.Delay(100);
+                var rowBounds = lastRow.TransformToVisual(PageScroll).TransformBounds(
+                    new Windows.Foundation.Rect(0, 0, lastRow.ActualWidth, lastRow.ActualHeight));
+                if (rowBounds.Left < -1 || rowBounds.Right > PageScroll.ViewportWidth + 1 ||
+                    rowBounds.Top < -1 || rowBounds.Bottom > PageScroll.ViewportHeight + 1)
+                    throw new InvalidOperationException("A labeled adapter row is clipped in the compact viewport.");
+                screen = screen.Apply(new("Listening", "No network.", []));
+                RenderScreen();
+                if (AddressDisplay.Visibility != Visibility.Collapsed || AddressPlaceholder.Visibility != Visibility.Visible ||
+                    screen.Phase != ReceiverUiPhase.NoNetwork)
+                    throw new InvalidOperationException("No-network layout retained stale adapter rows.");
+                screen = screen.Apply(new("Listening", "One network.", [endpoints[0]])).Apply(new("Initializing", "Synthetic request."));
+                RenderScreen();
+                if (AddressRows.Visibility != Visibility.Collapsed || AddressesText.Visibility != Visibility.Visible ||
+                    !ConnectionProgress.IsActive || AddressesText.FontSize < 32)
+                    throw new InvalidOperationException("Single-address connecting layout did not adapt.");
+                checks.Add("Compact multi-adapter rows remain readable and reachable; no-network and single-address transitions reset the layout");
+                screen = new ReceiverUiState().Apply(new("Listening", "Synthetic listener."))
+                    .Apply(new("Discovery failed", "Synthetic initial enumeration failure."));
+                RenderScreen();
+                if (ConnectionProgress.IsActive || ConnectionProgress.Visibility != Visibility.Collapsed ||
+                    AddressDisplay.Visibility != Visibility.Collapsed || !Problem.IsOpen ||
+                    StatusText.Text != "Network discovery unavailable" ||
+                    AddressPlaceholder.Text != "Network addresses unavailable" ||
+                    !WaitingHint.Text.Contains("reopen", StringComparison.Ordinal) ||
+                    !Problem.Message.Contains("reopen", StringComparison.Ordinal) || !screen.ListenerOpen)
+                    throw new InvalidOperationException("Initial discovery failure left startup spinning or omitted actionable restart guidance.");
+                checks.Add("Terminated initial discovery ends the spinner and gives network/reopen guidance while preserving the TCP listener");
+            }
+            finally
+            {
+                screen = actualState;
+                RenderScreen();
+                PageScroll.ChangeView(0, 0, null, true);
+                await Task.Delay(100);
+            }
             AddressesText.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
             await Task.Delay(100);
             var bounds = AddressesText.TransformToVisual(PageScroll).TransformBounds(new Windows.Foundation.Rect(0, 0,
@@ -230,56 +398,9 @@ public sealed partial class MainWindow : Window
         }
         await File.WriteAllTextAsync(reportFile, JsonSerializer.Serialize(new
         {
-            passed = failure is null, checks, failure, physicalPlaybackTested = false
+            passed = failure is null, checks, failure, displayedVersion = VersionText.Text,
+            versionSource = AppVersion.Current().Source, physicalPlaybackTested = false
         }, new JsonSerializerOptions { WriteIndented = true }));
-    }
-
-    internal async Task RunSrtReceiverSelfTestAsync(string reportFile)
-    {
-        string? failure = null;
-        long presented = 0, decoded = 0, audioFrames = 0;
-        var configuredVideoGenerations = 0;
-        var presentationSamples = new List<VideoPresentationSample>();
-        var awake = false;
-        try
-        {
-            await InitializeAsync();
-            if (server is null) throw new InvalidOperationException("Isolated SRT listener did not start.");
-            await File.WriteAllTextAsync(reportFile + ".ready.json", JsonSerializer.Serialize(new { port = server.Port }));
-            var until = Stopwatch.StartNew();
-            var accepted = false;
-            while (until.Elapsed < TimeSpan.FromSeconds(30))
-            {
-                accepted |= server.IsBusy;
-                presented = Math.Max(presented, video.PresentedFrames);
-                decoded = Math.Max(decoded, video.DecodedFrames);
-                configuredVideoGenerations = Math.Max(configuredVideoGenerations, video.ConfiguredVideoGenerations);
-                audioFrames = Math.Max(audioFrames, video.PlayedAudioFrames);
-                awake |= video.KeepsDisplayAwake;
-                if (video.IsAttached)
-                    presentationSamples.Add(new(Stopwatch.GetTimestamp(), video.PresentedFrames, video.LastPresentedPtsUs));
-                if (accepted && !server.IsBusy) break;
-                await Task.Delay(20);
-            }
-            if (server.IsBusy || !accepted) throw new TimeoutException("SRT test did not complete control STOP within thirty seconds.");
-            if (presented == 0 || decoded == 0 || !awake)
-                throw new InvalidOperationException("SRT did not actually present hardware video and acquire its display request. " +
-                    string.Join(" | ", notices.TakeLast(6)));
-            if (video.IsAttached || video.KeepsDisplayAwake)
-                throw new InvalidOperationException("SRT STOP did not detach video/release display power.");
-            await StopAsync();
-        }
-        catch (Exception error) { failure = $"{error.GetType().Name}: {error.Message}"; }
-        finally { if (server is not null) await StopAsync(); }
-        await File.WriteAllTextAsync(reportFile, JsonSerializer.Serialize(new
-        {
-            passed = failure is null, failure, hardwareDecodedFrames = decoded, presentedFrames = presented,
-            playedSourceAudioFrames = audioFrames, displayAwakeDuringPlayback = awake,
-            configuredVideoGenerations,
-            presentationClockFrequency = Stopwatch.Frequency, presentationSamples,
-            detachedAfterStop = !video.IsAttached, displayReleasedAfterStop = !video.KeepsDisplayAwake,
-            syntheticOnly = true, physicalSenderPlaybackTested = false
-        }, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
     }
 
     internal async Task RunVideoBacklogSelfTestAsync(string fixtureFile, string reportFile)
@@ -301,7 +422,7 @@ public sealed partial class MainWindow : Window
             var frames = generation.GetProperty("frames").EnumerateArray().ToArray();
             if (frames.Length is < 1 or > 512) throw new ArgumentException("Invalid synthetic GOP.");
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            await using (var player = await video.OpenAsync(new(codec, null, 30, "auto", null), timeout.Token))
+            await using (var player = await video.OpenAsync(new(codec, null, 30, "auto"), timeout.Token))
             {
                 await player.ConfigureAsync(new(PacketType.StreamConfig, 1, 1, 1, -1, 0,
                     JsonSerializer.SerializeToUtf8Bytes(new

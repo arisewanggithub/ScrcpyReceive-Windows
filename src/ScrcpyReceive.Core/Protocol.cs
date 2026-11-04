@@ -110,7 +110,8 @@ public static class Wire
     public const int Version = 3;
     public const int HeaderSize = 40;
 
-    public static async ValueTask<Packet> ReadAsync(Stream input, CancellationToken cancellationToken = default)
+    public static async ValueTask<Packet> ReadAsync(Stream input, CancellationToken cancellationToken = default,
+        Action<Packet, int, int>? payloadProgress = null)
     {
         var header = new byte[HeaderSize];
         await input.ReadExactlyAsync(header.AsMemory(0, 4), cancellationToken);
@@ -128,7 +129,19 @@ public static class Wire
         var length = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(8));
         Validate(packet, length);
         packet = packet with { Payload = new byte[checked((int)length)] };
-        await input.ReadExactlyAsync(packet.Payload, cancellationToken);
+        if (payloadProgress is null) await input.ReadExactlyAsync(packet.Payload, cancellationToken);
+        else
+        {
+            var received = 0;
+            payloadProgress(packet, received, packet.Payload.Length);
+            while (received < packet.Payload.Length)
+            {
+                var count = await input.ReadAsync(packet.Payload.AsMemory(received), cancellationToken);
+                if (count == 0) throw new EndOfStreamException("Unable to read beyond the end of the stream.");
+                received += count;
+                payloadProgress(packet, received, packet.Payload.Length);
+            }
+        }
         if (!IsMedia(packet.Type)) _ = packet.Object();
         return packet;
     }

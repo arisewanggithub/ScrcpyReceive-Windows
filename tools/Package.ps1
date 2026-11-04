@@ -22,7 +22,24 @@ foreach ($required in @('ScrcpyReceive.App.exe', 'ScrcpyReceive.App.pri', 'corec
     'licenses\ffmpeg.autogen-7.1.1\LICENSE.txt')) {
     if (-not (Test-Path -LiteralPath (Join-Path $published $required))) { throw "Incomplete self-contained publication: $required" }
 }
+$assemblyVersion = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $published 'ScrcpyReceive.App.dll')).Version
+if ($assemblyVersion -ne $number) {
+    throw "Package version $Version differs from application build version $assemblyVersion. Publish with -Version $($number.ToString(3)) first."
+}
 if (@(Get-ChildItem -LiteralPath $published -Recurse -File -Filter '*.pdb').Count -gt 0) { throw 'Publication contains prohibited PDBs.' }
+$nativeFiles = @('avcodec-61.dll', 'avutil-59.dll', 'swresample-5.dll',
+    'FFmpeg-LICENSE.txt', 'FFmpeg-copyright.txt', 'FFmpeg-build-dependencies.txt', 'FFmpeg-dependencies.spdx.json')
+$nativeDirectories = @(Get-ChildItem -LiteralPath (Join-Path $published 'native') -Force)
+if ($nativeDirectories.Count -ne 1 -or -not $nativeDirectories[0].PSIsContainer -or
+    $nativeDirectories[0].Name -ne "win-$Architecture") {
+    throw 'Publication must contain only the selected native architecture.'
+}
+$nativeDirectory = Join-Path $published "native\win-$Architecture"
+$nativeEntries = @(Get-ChildItem -LiteralPath $nativeDirectory -Force)
+if ($nativeEntries.Count -ne $nativeFiles.Count -or
+    @($nativeEntries | Where-Object { $_.PSIsContainer -or $nativeFiles -notcontains $_.Name }).Count -ne 0) {
+    throw 'Publication contains unexpected native runtime assets.'
+}
 
 function Assert-PeArchitecture([string]$Path) {
     $stream = [System.IO.File]::OpenRead($Path)
@@ -75,13 +92,13 @@ $manifest = @"
   <DisplayName>ScrcpyReceive-Windows</DisplayName>
   <PublisherDisplayName>$display</PublisherDisplayName>
   <Logo>Assets\Receiver50.png</Logo>
-  <Description>Windows hardware H.264 video-only receiver preview for trusted private networks.</Description>
+  <Description>Windows hardware H.264, HEVC and AV1 receiver preview with audio over TCP for trusted private networks.</Description>
  </Properties>
  <Resources><Resource Language="en-us"/></Resources>
  <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22621.0" MaxVersionTested="10.0.26100.0"/></Dependencies>
  <Applications>
   <Application Id="App" Executable="ScrcpyReceive.App.exe" EntryPoint="Windows.FullTrustApplication">
-   <uap:VisualElements DisplayName="ScrcpyReceive-Windows" Description="Hardware H.264 video receiver preview"
+   <uap:VisualElements DisplayName="ScrcpyReceive-Windows" Description="Hardware video and audio receiver over TCP"
     BackgroundColor="#184E40" Square44x44Logo="Assets\Receiver44.png" Square150x150Logo="Assets\Receiver150.png"/>
   </Application>
  </Applications>

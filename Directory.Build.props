@@ -4,6 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Deterministic>true</Deterministic>
+    <Version Condition="'$(Version)' == ''">0.1.0</Version>
     <ReceiverArchitecture Condition="'$(Platform)' == 'x64' Or '$(RuntimeIdentifier)' == 'win-x64'">x64</ReceiverArchitecture>
     <ReceiverArchitecture Condition="'$(ReceiverArchitecture)' == ''">arm64</ReceiverArchitecture>
     <ReceiverRuntimeIdentifier>win-$(ReceiverArchitecture)</ReceiverRuntimeIdentifier>

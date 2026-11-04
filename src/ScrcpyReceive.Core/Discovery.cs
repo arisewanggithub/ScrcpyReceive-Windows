@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace ScrcpyReceive.Core;
 
-public sealed record ListenerAddress(IPAddress Address, IPAddress Broadcast);
+public sealed record ListenerAddress(IPAddress Address, IPAddress Broadcast, string AdapterName = "");
 
 public static class Discovery
 {
@@ -22,15 +22,17 @@ public static class Discovery
         NetworkInterface.GetAllNetworkInterfaces()
             .Where(item => item.OperationalStatus == OperationalStatus.Up &&
                 item.NetworkInterfaceType != NetworkInterfaceType.Loopback)
-            .SelectMany(item => item.GetIPProperties().UnicastAddresses)
-            .Where(item => item.Address.AddressFamily == AddressFamily.InterNetwork &&
-                !IPAddress.IsLoopback(item.Address))
-            .Select(item =>
+            .SelectMany(adapter => adapter.GetIPProperties().UnicastAddresses.Select(item => (Adapter: adapter, Item: item)))
+            .Where(entry => entry.Item.Address.AddressFamily == AddressFamily.InterNetwork &&
+                !IPAddress.IsLoopback(entry.Item.Address))
+            .Select(entry =>
             {
+                var item = entry.Item;
                 var address = item.Address.GetAddressBytes();
                 var mask = item.IPv4Mask.GetAddressBytes();
                 return new ListenerAddress(item.Address,
-                    new IPAddress(address.Select((value, index) => (byte)(value | ~mask[index])).ToArray()));
+                    new IPAddress(address.Select((value, index) => (byte)(value | ~mask[index])).ToArray()),
+                    entry.Adapter.Name);
             }).DistinctBy(item => item.Address).OrderBy(item => item.Address.ToString(), StringComparer.Ordinal).ToArray();
 
     public static byte[] Advertisement(string name, int port, bool busy) =>

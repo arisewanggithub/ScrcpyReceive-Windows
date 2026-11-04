@@ -34,7 +34,6 @@ jobs:
       - name: Self-contained untrimmed publish
         run: |
           .\tools\PrepareNative.ps1 -Architecture ${{ matrix.arch }}
-          .\tools\PrepareSrt.ps1 -Architecture ${{ matrix.arch }}
           .\tools\Publish.ps1 -Architecture ${{ matrix.arch }}
       - name: Validate unsigned MSIX with CI-only identity
         run: |
