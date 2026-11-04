@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0"/>
+    <PackageReference Include="xunit" Version="2.9.3"/>
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1" PrivateAssets="all"/>
+    <ProjectReference Include="..\..\src\ScrcpyReceive.Core\ScrcpyReceive.Core.csproj"/>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\ScrcpyReceive.SrtInterop\PresentationProgress.cs" Link="PresentationProgress.cs"/>
+    <None Include="fixtures\*.json" CopyToOutputDirectory="PreserveNewest"/>
+    <None Include="..\..\src\ScrcpyReceive.App\MainWindow.xaml" Link="fixtures\MainWindow.xaml" CopyToOutputDirectory="PreserveNewest"/>
+  </ItemGroup>
+</Project>

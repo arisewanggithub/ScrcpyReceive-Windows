@@ -1,0 +1,97 @@
+ScrcpyReceive-Windows - dependency and reference notices
+
+This is an independent application, not an official scrcpy application.
+No source or binary from scrcpy or the Android sender/receiver is included.
+Protocol behavior was inspected to implement
+interoperability independently. Reference projects' original licenses remain
+applicable to their own code; a reference is not a redistribution permission.
+
+Distributed framework/runtime components:
+
+- Microsoft .NET runtime (MIT and third-party notices shipped with runtime)
+  https://github.com/dotnet/runtime/blob/main/LICENSE.TXT
+  https://github.com/dotnet/runtime/blob/main/THIRD-PARTY-NOTICES.TXT
+- Microsoft Windows App SDK / WinUI
+  https://github.com/microsoft/WindowsAppSDK/blob/main/LICENSE
+  https://github.com/microsoft/microsoft-ui-xaml/blob/main/LICENSE
+  NuGet components, redistributables and native runtime components may have
+  additional Microsoft license terms accompanying their packages.
+- Microsoft Windows SDK BuildTools is a build-time dependency under its
+  package license. Do not redistribute SDK tooling in the application package.
+
+Tests only (not app dependencies): xUnit.net and its Visual Studio runner
+(Apache-2.0), Microsoft.NET.Test.Sdk and test platform (MIT).
+
+Hardware video dependencies in this preview:
+
+- FFmpeg 7.1.1, System233 ffmpeg-7.1.1-r2 ARM64/x64 shared LGPL builds.
+  SHA256-pinned archives are prepared by tools/PrepareNative.ps1.
+  Video uses hardware D3D11VA only; software video pixel formats are refused.
+  AAC/Opus audio decoding and PCM sample conversion use the native audio
+  components, including dynamically linked swresample.
+  Dynamic DLLs remain replaceable with ABI-compatible user-built versions.
+  Exact upstream license, copyright, dependency SPDX and build metadata are
+  shipped in native/win-{architecture}. Corresponding sources/build provenance:
+  https://github.com/FFmpeg/FFmpeg/tree/n7.1.1
+  https://github.com/System233/ffmpeg-msvc-prebuilt/tree/ffmpeg-7.1.1-r2
+  https://ffmpeg.org/legal.html
+- FFmpeg.AutoGen 7.1.1 (LGPL-3.0). Its complete package LICENSE.txt is
+  included under licenses/FFmpeg.AutoGen-7.1.1 in published distributions.
+  Corresponding source commit recorded by the exact NuGet package:
+  https://github.com/Ruslan-B/FFmpeg.AutoGen/tree/d90d69ba6287e040ea09e68e0fc66c641ec77a34
+- SRT 1.5.7 (Mozilla Public License 2.0), dynamically linked caller transport.
+  Independently built from the checksum-pinned Haivision release, with a
+  ScrcpyReceive-Windows change in srtcore/core.cpp: overdue missing-packet
+  gaps wait for retransmission instead of spinning under the receive lock.
+  encryption, applications and logging are disabled. The exact upstream
+  SRT-LICENSE.txt and corresponding SRT-1.5.7-source.zip accompany srt.dll
+  in native/win-{architecture}. SRT-1.5.7-receiver-source.zip contains the
+  exact modified corresponding source under MPL 2.0; tools/PrepareSrt.ps1
+  applies the narrowly scoped change reproducibly and pins all build tools
+  and also prepares avformat-61.dll from the FFmpeg LGPL archive above,
+  checking its actual PE dependency closure without replacing existing files.
+  https://github.com/Haivision/srt/tree/v1.5.7
+  Build tools (not application redistributables): Zig 0.14.1 (MIT and
+  accompanying LLVM/runtime notices), CMake 3.31.6 (BSD-3-Clause and
+  accompanying notices), Ninja 1.13.1 (Apache-2.0).
+  Statically linked compiler/C++/MinGW runtime notices are also supplied
+  under native/win-{architecture}/SRT-runtime-notices (including
+  Apache-2.0 WITH LLVM-exception, MIT and MinGW component-specific terms).
+- Vortice.Direct3D11 / Vortice.DXGI / Vortice.Mathematics 3.8.3 and
+  SharpGen.Runtime / SharpGen.Runtime.COM (MIT), with notices below.
+  https://github.com/amerkoleci/Vortice.Windows
+  https://github.com/SharpGenTools/SharpGenTools
+
+Vortice.Windows / Vortice.Mathematics
+Copyright (c) Amer Koleci and Contributors
+
+SharpGen.Runtime / SharpGen.Runtime.COM
+Copyright (c) 2010-2017 Alexandre Mutel,
+2017-2023 Jeremy Koritzinsky, 2023-2024 Amer Koleci
+
+The MIT License (MIT)
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+Keep all runtime/package-supplied license and third-party notice files in
+self-contained distributions. Review exact restored package license terms
+before public redistribution or Store submission. Adding other media
+libraries requires pinned sources/binaries,
+architecture checks, corresponding notices and any required source offers.
+This file is not a representation of completed licensing/legal review.

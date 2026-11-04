@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.22621.0</SupportedOSPlatformVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NativeRuntime>$(ReceiverRuntimeIdentifier)</NativeRuntime>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ScrcpyReceive.SrtInterop" />
+    <ProjectReference Include="..\ScrcpyReceive.Core\ScrcpyReceive.Core.csproj"/>
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3"/>
+    <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1"/>
+    <Content Include="..\..\native\$(NativeRuntime)\**\*" Link="native\$(NativeRuntime)\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"/>
+  </ItemGroup>
+  <Target Name="ValidateMediaArchitecture" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(RuntimeIdentifier)' != '' And '$(RuntimeIdentifier)' != 'win-arm64' And '$(RuntimeIdentifier)' != 'win-x64'"
+           Text="Only native win-arm64 and win-x64 receiver media runtimes are supported."/>
+  </Target>
+</Project>

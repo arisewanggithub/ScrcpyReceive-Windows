@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ScrcpyReceive.App/ScrcpyReceive.App.csproj" />
+    <Project Path="src/ScrcpyReceive.Core/ScrcpyReceive.Core.csproj" />
+    <Project Path="src/ScrcpyReceive.Media/ScrcpyReceive.Media.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ScrcpyReceive.Tests/ScrcpyReceive.Tests.csproj" />
+  </Folder>
+</Solution>

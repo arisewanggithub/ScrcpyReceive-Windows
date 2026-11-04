@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0"/>
+    <PackageReference Include="xunit" Version="2.9.3"/>
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1" PrivateAssets="all"/>
+    <ProjectReference Include="..\..\src\ScrcpyReceive.Core\ScrcpyReceive.Core.csproj"/>
+    <ProjectReference Include="$(SenderCoreProject)" Condition="'$(SenderCoreProject)' != ''"/>
+  </ItemGroup>
+  <Target Name="RequireSenderSource" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(SenderCoreProject)' == '' Or !Exists('$(SenderCoreProject)')"
+           Text="Optional paired-source tests require -p:SenderCoreProject pointing to an existing ScrcpySend.Core.csproj. No sender source is copied."/>
+  </Target>
+</Project>

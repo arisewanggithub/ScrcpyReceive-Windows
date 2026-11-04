@@ -1,0 +1,70 @@
+name: ScrcpyReceive-Windows CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: receiver-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: windows-11-arm
+          - arch: x64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.x
+      - name: Protocol and real loopback tests
+        run: dotnet test .\tests\ScrcpyReceive.Tests\ScrcpyReceive.Tests.csproj -c Release --logger trx --results-directory .\TestResults
+      - name: Self-contained untrimmed publish
+        run: |
+          .\tools\PrepareNative.ps1 -Architecture ${{ matrix.arch }}
+          .\tools\PrepareSrt.ps1 -Architecture ${{ matrix.arch }}
+          .\tools\Publish.ps1 -Architecture ${{ matrix.arch }}
+      - name: Validate unsigned MSIX with CI-only identity
+        run: |
+          .\tools\Package.ps1 -Architecture ${{ matrix.arch }} `
+            -PublishedDirectory .\artifacts\win-${{ matrix.arch }} `
+            -OutputDirectory .\artifacts\msix-${{ matrix.arch }} `
+            -Version 0.1.0.0 -PackageName ScreenCopy.Receiver.CIOnly `
+            -Publisher 'CN=ScreenCopy Receiver CI Only' -PublisherDisplayName 'CI Only - not a Store identity'
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: ScrcpyReceive-Windows-${{ matrix.arch }}-${{ github.run_id }}
+          path: |
+            artifacts\msix-${{ matrix.arch }}\*.msix
+            artifacts\win-${{ matrix.arch }}\**
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: always()
+        with:
+          name: ScrcpyReceive-Windows-tests-${{ matrix.arch }}-${{ github.run_id }}
+          path: TestResults\*.trx
+          retention-days: 7
+          if-no-files-found: ignore
+  gate:
+    name: Receiver PR gate
+    needs: [build]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require both architecture jobs
+        env:
+          RESULT: ${{ needs.build.result }}
+        run: test "$RESULT" = success

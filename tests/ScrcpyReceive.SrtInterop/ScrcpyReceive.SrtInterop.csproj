@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.22621.0</SupportedOSPlatformVersion>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-arm64</RuntimeIdentifier>
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <PublishTrimmed>false</PublishTrimmed>
+    <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ScrcpyReceive.Core\ScrcpyReceive.Core.csproj"
+                      AdditionalProperties="DebugType=None;DebugSymbols=false"/>
+    <ProjectReference Include="..\..\src\ScrcpyReceive.Media\ScrcpyReceive.Media.csproj"
+                      AdditionalProperties="DebugType=None;DebugSymbols=false"/>
+    <ProjectReference Include="$(SenderMediaProject)" Condition="'$(SenderMediaProject)' != ''"
+                      AdditionalProperties="DebugType=None;DebugSymbols=false"/>
+  </ItemGroup>
+  <Target Name="RequireSenderSource" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(SenderMediaProject)' == '' Or !Exists('$(SenderMediaProject)')"
+           Text="SRT interoperability requires -p:SenderMediaProject pointing to an existing ScrcpySend.Media.csproj. No sender source is copied."/>
+  </Target>
+</Project>
